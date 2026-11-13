@@ -4,6 +4,18 @@
     {
       "versions": [
         {
+          "version": "0.1.2",
+          "artifacts": [
+            {
+              "size": 18482,
+              "signingKeyId": "uc-resource-audit.r2.736bcd9c783cb013",
+              "target": "universal",
+              "url": "plugins/uc-resource-audit/releases/v0.1.2/com.greencloud.uc.resource-audit-0.1.2-universal-signed.dbxp",
+              "sha256": "27dbaa095e21330d4453103bd099f13d79d4f6df57ba5e53b5ffc0edeb67a885"
+            }
+          ]
+        },
+        {
           "artifacts": [
             {
               "url": "plugins/uc-resource-audit/releases/v0.1.1/com.greencloud.uc.resource-audit-0.1.1-universal-signed.dbxp",
@@ -24,7 +36,7 @@
       "name": "UC 资源变更查询",
       "description": "按应用和资源查看 UC 操作人、时间及停用记录",
       "id": "com.greencloud.uc.resource-audit",
-      "latestVersion": "0.1.1"
+      "latestVersion": "0.1.2"
     }
   ],
   "repository": {

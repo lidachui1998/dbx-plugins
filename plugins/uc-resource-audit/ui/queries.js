@@ -1,15 +1,7 @@
 "use strict";
 
 globalThis.UcAudit = (() => {
-  const TABLES = ["app", "resource", "resource_relation", "audit_log", "operation_log", "entity_operation", "user_info"];
-  const labels = {
-    is_halt: "停用状态", name: "名称", identity: "编码", list_order: "排序",
-    parent_id: "父级", hidden: "隐藏状态", permission: "权限码", link: "地址",
-    unit_id: "适用单位", unit_type: "单位类型", device: "设备",
-  };
-  const metadata = new Set(["modify_datetime", "modify_user", "create_datetime", "create_user"]);
-  const shortValueFields = ["is_halt", "name", "identity", "list_order", "hidden", "permission", "unit_type", "device"];
-
+  const TABLES = ["app", "resource", "resource_relation", "audit_log", "operation_log", "entity_operation", "entity_operation_detail", "user_info"];
   // 使用 UTF-8 字节构造 SQL 字面量，避免引号和 MySQL 转义模式影响输入。
   function literal(value) {
     const hex = Array.from(new TextEncoder().encode(String(value)), b => b.toString(16).padStart(2, "0")).join("");
@@ -36,67 +28,97 @@ globalThis.UcAudit = (() => {
     return "SELECT code, descript AS name FROM " + table(schema, "app") + " ORDER BY descript, code";
   }
 
-  function selectResource(schema, appCode) {
-    return "SELECT CAST(r.id AS CHAR) AS id,r.uuid,r.name,r.identity,r.type,r.is_halt," +
-      "p.name AS parent_name,r.modify_user,r.modify_datetime " +
-      "FROM " + table(schema, "resource") + " r LEFT JOIN " + table(schema, "resource") +
-      " p ON p.uuid=r.parent_id WHERE r.app_code=" + literal(appCode);
+  const treePageSize = 500;
+  const logPageSize = 30;
+
+  function resources(schema, appCode, cursor = "0") {
+    return "SELECT CAST(id AS CHAR) AS id,uuid,name,identity,type,parent_id,list_order,link,permission,is_halt " +
+      "FROM " + table(schema, "resource") + " WHERE app_code=" + literal(appCode) +
+      " AND id>" + (cursor === "0" ? "0" : numericId(cursor)) + " ORDER BY id LIMIT " + treePageSize;
   }
 
-  function resources(schema, appCode, search) {
+  function resourceById(schema, appCode, resource) {
+    return "SELECT CAST(id AS CHAR) AS id,uuid,name,identity,type,parent_id,is_halt," +
+      "create_user,create_datetime,modify_user,modify_datetime FROM " + table(schema, "resource") +
+      " WHERE app_code=" + literal(appCode) + " AND id=" + numericId(resource.id) +
+      " AND uuid=" + literal(resource.uuid) + " LIMIT 1";
+  }
+
+  function deletedResources(schema, appCode, search) {
+    const source = table(schema, "audit_log");
     const keyword = literal(search);
-    const match = search
-      ? " AND (LOCATE(" + keyword + ",r.identity)>0 OR LOCATE(" + keyword + ",r.name)>0" +
-        " OR CAST(r.id AS CHAR)=" + keyword + ")"
-      : " AND r.parent_id='-1'";
-    return selectResource(schema, appCode) + match +
-      " ORDER BY " + (search ? "(r.identity=" + keyword + ") DESC,(r.name=" + keyword + ") DESC," : "") +
-      "r.list_order,r.id LIMIT 31";
+    const numericMatch = /^[1-9]\d{0,19}$/.test(search) ? " AND a.`PrimaryKey`=" + numericId(search) : "";
+    const fields = ["app_code", "uuid", "name", "identity", "type", "parent_id", "create_user", "create_datetime"];
+    const snapshot = fields.map(field => "MAX(CASE WHEN a.ColumnName='" + field + "' THEN a.OldValue END) AS " + field);
+    return "SELECT CAST(a.`PrimaryKey` AS CHAR) AS id," + snapshot.join(",") +
+      " FROM " + source + " a WHERE a.TableName='resource' AND a.Operation='delete'" + numericMatch +
+      " GROUP BY a.`PrimaryKey`,COALESCE(NULLIF(a.ParentID,0),a.ID)" +
+      " HAVING app_code=" + literal(appCode) +
+      " AND (LOCATE(" + keyword + ",name)>0 OR LOCATE(" + keyword + ",identity)>0 OR id=" + keyword + ")" +
+      " ORDER BY MAX(a.ID) DESC LIMIT 101";
   }
 
-  function resourceById(schema, appCode, resourceId) {
-    return selectResource(schema, appCode) + " AND r.id=" + numericId(resourceId) + " LIMIT 1";
+  function relationIds(schema, resource, hasCurrent, hasAudit, cursor) {
+    const key = literal(resource.uuid);
+    const after = cursor ? numericId(cursor) : "0";
+    const sources = [];
+    if (hasCurrent) sources.push("SELECT id AS relation_id FROM " + table(schema, "resource_relation") +
+      " WHERE resource_id=" + key + " AND id>" + after);
+    if (hasAudit) sources.push("SELECT DISTINCT `PrimaryKey` AS relation_id FROM " + table(schema, "audit_log") +
+      " WHERE TableName='resource_relation' AND ColumnName='resource_id' AND `PrimaryKey`>" + after +
+      " AND (OldValue=" + key + " OR NewValue=" + key + ")");
+    return "SELECT CAST(relation_id AS CHAR) AS id FROM (" + sources.join(" UNION ") +
+      ") rel ORDER BY relation_id LIMIT " + treePageSize;
   }
 
-  function relations(schema, resource) {
-    return "SELECT CAST(id AS CHAR) AS id FROM " + table(schema, "resource_relation") +
-      " WHERE resource_id=" + literal(resource.uuid) + " ORDER BY id LIMIT 500";
+  function page(alias, cursor) {
+    return (cursor ? " AND " + alias + ".id<" + numericId(cursor) : "") +
+      " ORDER BY " + alias + ".id DESC LIMIT " + logPageSize;
   }
 
-  function audit(schema, resource, relationIds) {
-    const relationScope = relationIds.length
-      ? " OR (TableName='resource_relation' AND `PrimaryKey` IN (" + relationIds.map(numericId).join(",") + "))"
+  function audit(schema, resource, ids, cursor) {
+    const relationScope = ids.length
+      ? " OR (a.TableName='resource_relation' AND a.`PrimaryKey` IN (" + ids.map(numericId).join(",") + "))"
       : "";
-    const allow = shortValueFields.map(field => "'" + field + "'").join(",");
-    return "SELECT CAST(ID AS CHAR) AS id,TableName AS entity,ColumnName AS field,Operation AS operation," +
-      " CASE WHEN ColumnName IN (" + allow + ") THEN LEFT(OldValue,180) END AS before_value," +
-      " CASE WHEN ColumnName IN (" + allow + ") THEN LEFT(NewValue,180) END AS after_value," +
-      " CreateTime AS at_time,CreateClerk AS actor FROM " + table(schema, "audit_log") +
-      " WHERE (TableName='resource' AND `PrimaryKey`=" + numericId(resource.id) + ")" + relationScope +
-      " ORDER BY CreateTime DESC,ID DESC LIMIT 601";
+    return "SELECT CAST(a.ID AS CHAR) AS id,CAST(a.ParentID AS CHAR) AS audit_parent," +
+      "CAST(a.`PrimaryKey` AS CHAR) AS record_id,a.TableName AS entity,a.ColumnName AS field,a.Operation AS operation," +
+      "a.OldValue AS before_value,a.NewValue AS after_value,a.CreateTime AS at_time,a.CreateClerk AS actor" +
+      " FROM " + table(schema, "audit_log") + " a WHERE ((a.TableName='resource' AND a.`PrimaryKey`=" +
+      numericId(resource.id) + ")" + relationScope + ")" + page("a", cursor);
   }
 
-  function operationLog(schema, resource, relationIds) {
-    const relationKeys = [resource.uuid, ...relationIds].map(literal).join(",");
-    return "SELECT CAST(id AS CHAR) AS id,create_datetime AS at_time,create_user AS actor," +
-      " CASE WHEN previous IS NULL OR previous IN ('','null','{}') THEN 'insert'" +
-      " WHEN lastest IS NULL OR lastest IN ('','null','{}') THEN 'delete' ELSE 'update' END AS operation" +
-      " FROM " + table(schema, "operation_log") +
-      " WHERE (table_name='resource' AND table_uuid IN (" + [resource.uuid, resource.id].map(literal).join(",") + "))" +
-      " OR (table_name='resource_relation' AND table_uuid IN (" + relationKeys + "))" +
-      " ORDER BY create_datetime DESC,id DESC LIMIT 201";
+  function operationLog(schema, resource, ids, cursor) {
+    const keys = [resource.uuid, resource.id].filter(Boolean).map(literal).join(",");
+    const relationKeys = [resource.uuid, ...ids].filter(Boolean).map(literal).join(",");
+    const relations = relationKeys ? " OR (o.table_name='resource_relation' AND o.table_uuid IN (" + relationKeys + "))" : "";
+    return "SELECT CAST(o.id AS CHAR) AS id,o.create_datetime AS at_time,o.create_user AS actor," +
+      "o.table_name AS entity,o.table_uuid AS record_id,o.previous AS before_value,o.lastest AS after_value" +
+      " FROM " + table(schema, "operation_log") + " o WHERE ((o.table_name='resource' AND o.table_uuid IN (" +
+      keys + "))" + relations + ")" + page("o", cursor);
   }
 
-  function entityLog(schema, resource) {
-    return "SELECT CAST(id AS CHAR) AS id,operation_date AS at_time,operator_user AS actor,operation_name AS title" +
-      " FROM " + table(schema, "entity_operation") + " WHERE entity_type='RESOURCE'" +
-      " AND entity_key IN (" + [resource.uuid, resource.id].map(literal).join(",") + ")" +
-      " ORDER BY operation_date DESC,id DESC LIMIT 201";
+  function entityScope(resource) {
+    const keys = [resource.uuid, resource.id].filter(Boolean).map(literal).join(",");
+    return "e.entity_type='RESOURCE' AND e.entity_key IN (" + keys + ")";
+  }
+
+  function entityLog(schema, resource, cursor) {
+    return "SELECT CAST(e.id AS CHAR) AS id,e.operation_id,e.operation_date AS at_time," +
+      "e.operator_user AS actor,e.operation_name AS title FROM " + table(schema, "entity_operation") +
+      " e WHERE " + entityScope(resource) + page("e", cursor);
+  }
+
+  function entityDetails(schema, resource, cursor) {
+    return "SELECT CAST(d.id AS CHAR) AS id,CAST(e.id AS CHAR) AS event_id,d.field," +
+      "d.prev_value AS before_value,d.next_value AS after_value FROM " + table(schema, "entity_operation") +
+      " e JOIN " + table(schema, "entity_operation_detail") +
+      " d ON d.operation_id=e.operation_id AND d.entity_type=e.entity_type AND d.entity_key=e.entity_key" +
+      " WHERE " + entityScope(resource) + page("d", cursor);
   }
 
   function operators(schema, codes) {
     return "SELECT code,name FROM " + table(schema, "user_info") +
-      " WHERE code IN (" + codes.map(literal).join(",") + ") GROUP BY code,name ORDER BY code,name LIMIT 1001";
+      " WHERE code IN (" + codes.map(literal).join(",") + ") GROUP BY code,name ORDER BY code,name";
   }
 
   function status(value) {
@@ -107,60 +129,7 @@ globalThis.UcAudit = (() => {
     return String(value || "").replace("T", " ").slice(0, 19);
   }
 
-  function nearTime(a, b) {
-    return Math.abs(Date.parse(a.replace(" ", "T") + "Z") - Date.parse(b.replace(" ", "T") + "Z")) <= 2000;
-  }
 
-  function buildHistory(auditRows, operationRows, entityRows) {
-    const events = new Map();
-    const mainStatus = auditRows.filter(row => row.entity === "resource" && row.field === "is_halt");
-    for (const row of auditRows) {
-      // 同一次停用可能分别写入资源和关联审计，优先显示资源主记录。
-      const duplicate = row.entity === "resource_relation" && row.field === "is_halt" &&
-        mainStatus.some(other => other.actor === row.actor && other.operation === row.operation &&
-          other.before_value === row.before_value && other.after_value === row.after_value &&
-          nearTime(timeKey(other.at_time), timeKey(row.at_time)));
-      if (duplicate) continue;
-      const key = JSON.stringify([timeKey(row.at_time), row.actor, row.operation]);
-      if (!events.has(key)) {
-        events.set(key, {
-          at: timeKey(row.at_time), actor: row.actor, operation: row.operation,
-          details: new Set(), source: "字段审计", onlyMetadata: true,
-        });
-      }
-      const event = events.get(key);
-      if (metadata.has(row.field)) continue;
-      event.onlyMetadata = false;
-      const field = labels[row.field] || row.field;
-      const before = row.before_value;
-      const after = row.after_value;
-      if (row.field === "is_halt" && row.operation === "update") {
-        event.title = ({ T: "停用资源", F: "启用资源" })[after];
-        event.details.add(status(before) + " → " + status(after));
-      } else if (row.operation === "update") {
-        const change = before == null && after == null ? "" : " · " + (before ?? "空") + " → " + (after ?? "空");
-        event.details.add(field + change);
-      }
-    }
-    const rows = [...events.values()].filter(event => !event.onlyMetadata);
-    for (const event of events.values()) {
-      if (event.onlyMetadata && !rows.some(other => other.actor === event.actor &&
-        other.operation === event.operation && nearTime(other.at, event.at))) rows.push(event);
-    }
-    for (const [log, source] of [[operationRows, "操作日志"], [entityRows, "实体操作"]]) {
-      for (const row of log) {
-        const at = timeKey(row.at_time);
-        if (rows.some(event => event.source !== source && event.actor === row.actor &&
-          (!row.operation || row.operation === event.operation) && nearTime(event.at, at))) continue;
-        rows.push({ at, actor: row.actor, operation: row.operation || "update", title: row.title, details: [], source });
-      }
-    }
-    return rows.sort((a, b) => b.at.localeCompare(a.at)).map(event => ({
-      ...event,
-      title: event.title || ({ insert: "创建资源", update: "修改资源", delete: "删除资源" })[event.operation] || "资源操作",
-      details: [...event.details],
-    }));
-  }
-
-  return { discover, apps, resources, resourceById, relations, audit, operationLog, entityLog, operators, status, timeKey, buildHistory };
+  return { discover, apps, resources, resourceById, deletedResources, relationIds, audit, operationLog,
+    entityLog, entityDetails, operators, status, timeKey, treePageSize, logPageSize };
 })();

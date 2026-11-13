@@ -6,9 +6,18 @@ const el = id => document.getElementById(id);
 const connection = el("connection");
 const database = el("database");
 const application = el("application");
+const applicationPicker = el("application-picker");
+const applicationSearch = el("application-search");
+const applicationChoices = el("application-choices");
 const search = el("resource-search");
-const state = { connections: [], schemas: new Map(), resource: null, revision: 0 };
-let searchTimer;
+const picker = el("resource-picker");
+const choices = el("choices");
+const history = globalThis.UcAuditHistory;
+const state = {
+  connections: [], schemas: new Map(), resources: new Map(), children: new Map(),
+  resource: null, events: [], shown: 0, revision: 0, searchRevision: 0, expanded: new Set(),
+};
+const resourceName = resource => resource.name || resource.identity || "未命名资源";
 const resourcePlaceholder = "输入资源名称、编码或 ID";
 
 function notice(message, error = false) {
@@ -21,18 +30,26 @@ function options(select, emptyLabel, entries) {
 }
 
 function clearResource() {
-  clearTimeout(searchTimer);
+  ++state.searchRevision;
   state.resource = null;
-  el("choices").hidden = true;
+  state.events = [];
+  closePicker();
   el("result").hidden = true;
+  el("resource-table").hidden = true;
+  el("resource-type").disabled = true;
 }
 
 function resetApps() {
   options(application, "请先选择环境", []);
-  application.disabled = true;
+  applicationSearch.value = "";
+  applicationSearch.placeholder = "先选择环境";
+  applicationSearch.disabled = true;
+  el("toggle-applications").disabled = true;
+  closeApplicationPicker();
   search.value = "";
   search.placeholder = "先选择应用";
   search.disabled = true;
+  el("toggle-resources").disabled = true;
   clearResource();
 }
 
@@ -120,164 +137,551 @@ async function loadApps() {
     const apps = await query(q.apps(database.value), 2000);
     if (revision !== state.revision) return;
     options(application, "请选择应用", apps.map(row => [row.code, (row.name || row.code) + " · " + row.code]));
-    application.disabled = false;
+    applicationSearch.disabled = !apps.length;
+    el("toggle-applications").disabled = !apps.length;
+    applicationSearch.placeholder = apps.length ? "搜索应用名称或编码" : "没有应用";
     notice(apps.length ? "请选择应用。" : "该数据库没有应用记录。");
   } catch (error) {
     if (revision === state.revision) notice(errorText(error), true);
   }
 }
 
-async function findResources() {
+function closeApplicationPicker() {
+  applicationChoices.hidden = true;
+  applicationSearch.setAttribute("aria-expanded", "false");
+  el("toggle-applications").setAttribute("aria-expanded", "false");
+}
+
+function openApplicationPicker(term = "") {
+  if (applicationSearch.disabled) return;
+  const needle = term.trim().toLocaleLowerCase();
+  const buttons = [...application.options].filter(option => option.value &&
+    option.text.toLocaleLowerCase().includes(needle)).map(option => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "option";
+    button.textContent = option.text;
+    button.setAttribute("aria-current", String(option.value === application.value));
+    button.addEventListener("click", () => {
+      application.value = option.value;
+      applicationSearch.value = option.text;
+      closeApplicationPicker();
+      applicationSearch.focus();
+      loadResources();
+    });
+    const item = document.createElement("li");
+    item.append(button);
+    return item;
+  });
+  el("application-options").replaceChildren(...buttons);
+  el("application-empty").hidden = buttons.length > 0;
+  applicationChoices.hidden = false;
+  applicationSearch.setAttribute("aria-expanded", "true");
+  el("toggle-applications").setAttribute("aria-expanded", "true");
+}
+
+function resourcePath(resource, nodes = state.resources) {
+  const path = [resource];
+  const seen = new Set([resource.uuid]);
+  let parentId = resource.parent_id;
+  while (parentId && parentId !== "-1" && nodes.has(parentId) && !seen.has(parentId)) {
+    const parent = nodes.get(parentId);
+    path.unshift(parent);
+    seen.add(parentId);
+    parentId = parent.parent_id;
+  }
+  return path;
+}
+
+function pathText(resource) {
+  const path = resourcePath(resource);
+  const first = path[0];
+  const prefix = first.parent_id && first.parent_id !== "-1" ? ["上级不可查"] : [];
+  return [...prefix, ...path.map(resourceName)].join(" › ");
+}
+
+function closePicker() {
+  ++state.searchRevision;
+  choices.hidden = true;
+  search.setAttribute("aria-expanded", "false");
+  el("toggle-resources").setAttribute("aria-expanded", "false");
+}
+
+function openPicker() {
+  if (search.disabled) return;
+  if (choices.hidden) renderResourceTree(state.resource ? "" : search.value.trim());
+  choices.hidden = false;
+  search.setAttribute("aria-expanded", "true");
+  el("toggle-resources").setAttribute("aria-expanded", "true");
+}
+
+async function loadResources() {
   const revision = ++state.revision;
   clearResource();
-  const term = search.value.trim();
-  notice("正在查找资源…");
+  search.disabled = true;
+  el("toggle-resources").disabled = true;
+  search.value = "";
+  search.placeholder = application.value ? "正在读取资源…" : "先选择应用";
+  state.resources.clear();
+  state.children.clear();
+  state.expanded.clear();
+  if (!application.value) return notice("请选择应用。");
+  const schema = database.value;
+  const appCode = application.value;
+  const all = [];
+  notice("正在读取资源层级…");
   try {
-    const rows = await query(q.resources(database.value, application.value, term), 31);
-    if (revision !== state.revision) return;
-    const nodes = rows.slice(0, 30).map(resource => {
-      const item = document.createElement("li");
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "option";
-      const name = document.createElement("strong");
-      name.textContent = resource.name || resource.identity || "未命名资源";
-      const meta = document.createElement("span");
-      meta.className = "hint";
-      meta.textContent = [resource.parent_name, resource.identity, resource.type, "ID " + resource.id].filter(Boolean).join(" · ");
-      button.append(name, meta);
-      button.addEventListener("click", () => {
-        search.value = resource.name || resource.identity || resource.id;
-        state.resource = resource;
-        loadHistory(resource);
-      });
-      item.append(button);
-      return item;
-    });
-    el("resource-options").replaceChildren(...nodes);
-    el("choices").hidden = !nodes.length;
-    el("choices-note").hidden = rows.length <= 30;
-    notice(nodes.length ? (term ? "" : "可直接选一级资源，也可输入任意层级资源的名称或编码。") : "没有找到符合条件的资源。");
+    let cursor = "0";
+    for (;;) {
+      const rows = await query(q.resources(schema, appCode, cursor), q.treePageSize);
+      if (revision !== state.revision) return;
+      all.push(...rows);
+      if (rows.length < q.treePageSize) break;
+      cursor = rows.at(-1).id;
+    }
+    all.sort((a, b) => Number(a.list_order || 0) - Number(b.list_order || 0) || compareIds(a.id, b.id));
+    state.resources = new Map(all.map(row => [row.uuid, row]));
+    for (const row of all) {
+      const parent = resourcePath(row)[0];
+      const key = parent.uuid === row.uuid || parent.parent_id === row.uuid ? "" : row.parent_id;
+      if (!state.children.has(key)) state.children.set(key, []);
+      state.children.get(key).push(row);
+    }
+    search.disabled = false;
+    el("toggle-resources").disabled = false;
+    search.placeholder = resourcePlaceholder;
+    const types = [...new Set(all.map(row => row.type).filter(Boolean))].sort();
+    options(el("resource-type"), "全部类型", types.map(type => [type, typeLabel(type)]));
+    el("resource-type").disabled = !types.length;
+    notice("");
+    renderResourceTree("");
+    el("resource-table").hidden = false;
   } catch (error) {
     if (revision === state.revision) notice(errorText(error), true);
   }
 }
 
-function renderHistory(resource, events, names, incomplete, limited) {
-  const formatActor = code => names.get(code)?.size === 1 ? [...names.get(code)][0] + "（" + code + "）" : code || "未记录";
-  el("resource-name").textContent = resource.name || resource.identity || "未命名资源";
-  el("resource-meta").textContent = [resource.parent_name, resource.identity, "ID " + resource.id].filter(Boolean).join(" · ");
-  const badge = el("resource-status");
-  badge.textContent = q.status(resource.is_halt);
-  badge.className = "badge " + (({ T: "halted", F: "enabled" })[resource.is_halt] || "");
-  el("last-modifier").textContent = resource.modify_user && q.timeKey(resource.modify_datetime)
-    ? "资源最后写入 " + formatActor(resource.modify_user) + " · " + q.timeKey(resource.modify_datetime)
-    : "";
-  const shown = events.slice(0, 200);
-  el("history").replaceChildren(...shown.map(event => {
-    const row = document.createElement("tr");
-    for (const value of [formatActor(event.actor), event.at || "未记录", event.title, event.details.join("；") || "—"]) {
-      const cell = document.createElement("td");
-      cell.textContent = value;
-      row.append(cell);
+function compareIds(a, b) {
+  return a.length - b.length || a.localeCompare(b);
+}
+
+function renderResourceTree(term, deleted = [], limited = false) {
+  const list = el("resource-options");
+  const needle = term.toLocaleLowerCase();
+  const type = el("resource-type").value;
+  const filtering = Boolean(needle || type);
+  const hits = filtering ? [...state.resources.values()].filter(row => (!type || row.type === type) &&
+    (!needle || String(row.name || "").toLocaleLowerCase().includes(needle) ||
+     String(row.identity || "").toLocaleLowerCase().includes(needle) || row.id === needle)) : [];
+  deleted = deleted.filter(row => !type || row.type === type);
+  const matches = new Set([...hits, ...deleted].map(row => row.uuid));
+  const visible = new Set();
+  let roots = state.children.get("") || [];
+  let children = state.children;
+  if (filtering) {
+    const linked = new Map();
+    roots = [];
+    for (const resource of [...hits, ...deleted]) {
+      const path = resourcePath(resource);
+      for (const [index, row] of path.entries()) {
+        if (visible.has(row.uuid)) continue;
+        visible.add(row.uuid);
+        const parent = path[index - 1];
+        if (parent) {
+          if (!linked.has(parent.uuid)) linked.set(parent.uuid, []);
+          linked.get(parent.uuid).push(row);
+        } else roots.push(row);
+      }
     }
-    return row;
-  }));
-  el("history-table").hidden = !shown.length;
+    children = linked;
+  }
+  const nodes = roots.map(row => resourceNode(row, children, filtering, matches));
+  list.replaceChildren(...nodes);
+  el("tree-empty").hidden = nodes.length > 0;
+  el("tree-empty").textContent = filtering ? "没有找到匹配的资源。" : "该应用没有资源。";
+  el("choices-note").hidden = !limited;
+  const deletedButton = el("search-deleted");
+  deletedButton.hidden = !term || !state.schemas.get(database.value)?.has("audit_log");
+  deletedButton.disabled = false;
+  el("deleted-note").textContent = deleted.length ? "已找到 " + deleted.length + " 条删除记录" : "";
+  renderResourceTable(roots, children, filtering);
+}
+
+function typeLabel(type) {
+  return ({ MENU: "菜单", BUTTON: "按钮", OPERATION: "操作权限", REPORT: "报表" })[type] || type || "—";
+}
+
+function parentLabel(resource) {
+  const parent = state.resources.get(resource.parent_id);
+  return parent ? resourceName(parent) : resource.parent_id && resource.parent_id !== "-1" ? "不可查" : "无（一级资源）";
+}
+
+function selectResource(resource) {
+  search.value = resourceName(resource);
+  state.resource = resource;
+  closePicker();
+  loadHistory(resource);
+}
+
+function renderResourceTable(roots, children, filtering) {
+  const tbody = el("resource-rows");
+  const rows = [];
+  function addRows(items, depth) {
+    for (const resource of items) {
+      const row = document.createElement("tr");
+      if (resource.is_halt === "T" || resource.deleted) row.className = "inactive-resource";
+      const order = document.createElement("td");
+      order.textContent = resource.list_order ?? "—";
+      const name = document.createElement("td");
+      const branch = document.createElement("div");
+      branch.className = "tree-row";
+      branch.style.paddingInlineStart = Math.min(depth, 10) * 17 + "px";
+      const descendants = children.get(resource.uuid);
+      const expanded = descendants?.length && (state.expanded.has(resource.uuid) || (filtering && !state.expanded.has("closed:" + resource.uuid)));
+      if (descendants?.length) {
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "tree-toggle";
+        toggle.setAttribute("aria-expanded", String(Boolean(expanded)));
+        toggle.setAttribute("aria-label", (expanded ? "收起 " : "展开 ") + resourceName(resource));
+        toggle.textContent = expanded ? "−" : "+";
+        toggle.addEventListener("click", () => {
+          if (expanded) {
+            state.expanded.delete(resource.uuid);
+            state.expanded.add("closed:" + resource.uuid);
+          } else {
+            state.expanded.add(resource.uuid);
+            state.expanded.delete("closed:" + resource.uuid);
+          }
+          renderResourceTable(roots, children, filtering);
+          [...tbody.querySelectorAll("button[data-node]")].find(button => button.dataset.node === resource.uuid)?.focus();
+        });
+        toggle.dataset.node = resource.uuid;
+        branch.append(toggle);
+      } else {
+        const spacer = document.createElement("span");
+        spacer.className = "tree-spacer";
+        branch.append(spacer);
+      }
+      const select = document.createElement("button");
+      select.type = "button";
+      select.className = "resource-link";
+      select.textContent = resourceName(resource);
+      select.addEventListener("click", () => selectResource(resource));
+      branch.append(select);
+      name.append(branch);
+      row.append(order, name);
+      for (const value of [resource.identity, resource.link, typeLabel(resource.type), resource.permission, parentLabel(resource),
+        resource.deleted ? "已删除" : q.status(resource.is_halt)]) {
+        const cell = document.createElement("td");
+        cell.textContent = value || "—";
+        row.append(cell);
+      }
+      rows.push(row);
+      if (expanded) addRows(descendants, depth + 1);
+    }
+  }
+  addRows(roots, 0);
+  tbody.replaceChildren(...rows);
+  el("resource-table-empty").hidden = rows.length > 0;
+}
+
+function resourceNode(resource, children, searching, matches) {
+  const item = document.createElement("li");
+  const row = document.createElement("div");
+  row.className = "tree-row";
+  const descendants = children.get(resource.uuid);
+  if (descendants?.length) {
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "tree-toggle";
+    const branch = document.createElement("ul");
+    const setExpanded = expanded => {
+      toggle.setAttribute("aria-expanded", String(expanded));
+      toggle.setAttribute("aria-label", (expanded ? "收起 " : "展开 ") + resourceName(resource));
+      branch.hidden = !expanded;
+      if (expanded && !branch.childElementCount) {
+        branch.append(...descendants.map(child => resourceNode(child, children, searching, matches)));
+      }
+    };
+    toggle.addEventListener("click", () => setExpanded(branch.hidden));
+    row.append(toggle);
+    item.append(row, branch);
+    setExpanded(searching);
+  } else {
+    const spacer = document.createElement("span");
+    spacer.className = "tree-spacer";
+    row.append(spacer);
+    item.append(row);
+  }
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "option";
+  const name = document.createElement("strong");
+  name.textContent = resourceName(resource);
+  if (matches.has(resource.uuid)) name.className = "matched";
+  const label = document.createElement("span");
+  label.className = "hint";
+  label.textContent = ["上级 " + parentLabel(resource), resource.identity, typeLabel(resource.type), "ID " + resource.id,
+    resource.deleted ? "已删除" : ""].filter(Boolean).join(" · ");
+  button.append(name, label);
+  button.addEventListener("click", () => {
+    search.focus();
+    selectResource(resource);
+  });
+  row.append(button);
+  return item;
+}
+
+async function searchDeleted() {
+  const revision = ++state.searchRevision;
+  const term = search.value.trim();
+  if (!term) return;
+  const button = el("search-deleted");
+  const note = el("deleted-note");
+  button.disabled = true;
+  note.textContent = "正在读取删除审计…";
+  try {
+    const rows = await query(q.deletedResources(database.value, application.value, term), 101);
+    if (revision !== state.searchRevision) return;
+    const deleted = rows.slice(0, 100).map(row => ({
+      ...row, deleted: true, originalUuid: row.uuid, uuid: "deleted:" + row.id,
+    }));
+    const unique = [...new Map(deleted.reverse().map(row => [row.id, row])).values()].reverse();
+    renderResourceTree(term, unique, rows.length > 100);
+    el("search-deleted").focus();
+    if (!unique.length) note.textContent = "没有找到匹配的删除记录。";
+  } catch (error) {
+    if (revision === state.searchRevision) note.textContent = errorText(error);
+  } finally {
+    if (revision === state.searchRevision) button.disabled = false;
+  }
+}
+
+function renderHistory(resource, events, names, incomplete) {
+  const formatActor = code => names.get(code)?.size === 1 ? [...names.get(code)][0] + "（" + code + "）" : code || "未记录";
+  el("resource-name").textContent = resourceName(resource);
+  el("resource-path").textContent = pathText(resource);
+  el("resource-meta").textContent = [resource.identity, resource.type, "ID " + resource.id].filter(Boolean).join(" · ");
+  const badge = el("resource-status");
+  badge.textContent = resource.deleted ? "已删除" : q.status(resource.is_halt);
+  badge.className = "badge " + (resource.deleted || resource.is_halt === "T" ? "halted" : resource.is_halt === "F" ? "enabled" : "");
+  el("last-modifier").textContent = resource.modify_user && q.timeKey(resource.modify_datetime)
+    ? "资源最后写入 " + formatActor(resource.modify_user) + " · " + q.timeKey(resource.modify_datetime) : "";
+  state.events = events;
+  state.shown = 0;
+  state.names = formatActor;
+  el("history").replaceChildren();
+  appendHistory();
   const notes = [];
-  if (!shown.length) notes.push("没有查到这条资源的操作历史。");
-  if (limited || events.length > shown.length) notes.push("历史记录较多，显示最近查到的记录。");
-  if (incomplete) notes.push("部分日志或姓名无法读取，当前显示可查到的记录和账号。");
+  if (incomplete.length) notes.push("以下来源未能完整读取：" + [...new Set(incomplete)].join("、") + "。");
+  if (!events.some(event => event.entity === "resource" && event.operation === "insert")) notes.push("当前数据未保留可确认的创建记录。");
+  if (!events.length) notes.push("没有查到这条资源的操作历史。");
   el("history-note").textContent = notes.join(" ");
   el("result").hidden = false;
 }
 
-async function loadHistory(resource, refreshResource = false) {
+function appendHistory() {
+  const formatValue = (field, value) => {
+    if (value === null) return "空";
+    if (field === "is_halt" && (value === "T" || value === "F")) return q.status(value);
+    if (field === "parent_id") {
+      if (!value || value === "-1") return "无（一级资源）";
+      if (state.resources.has(value)) return resourceName(state.resources.get(value)) + "（" + value + "）";
+    }
+    return value === "" ? "空字符串" : value;
+  };
+  const rows = state.events.slice(state.shown, state.shown + 80);
+  for (const event of rows) {
+    const row = document.createElement("tr");
+    for (const value of [state.names(event.actor), event.at || "未记录", event.title]) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    }
+    const cell = document.createElement("td");
+    if (event.changes.length) {
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      const labels = event.changes.map(change => history.labels[change.field] || change.field);
+      summary.textContent = labels.length <= 3 ? labels.join("、") : labels.slice(0, 3).join("、") + " 等 " + labels.length + " 项";
+      const list = document.createElement("ul");
+      for (const [index, change] of event.changes.entries()) {
+        const item = document.createElement("li");
+        const field = document.createElement("strong");
+        field.textContent = labels[index] + " ";
+        const before = formatValue(change.field, change.before);
+        const after = formatValue(change.field, change.after);
+        const value = event.operation === "insert" ? after : event.operation === "delete" ? before : before + " → " + after;
+        item.append(field, value);
+        list.append(item);
+      }
+      if (event.changes.length <= 2) cell.append(list);
+      else {
+        details.append(summary, list);
+        cell.append(details);
+      }
+    } else cell.textContent = event.operation === "insert" ? "未记录创建时的字段值" : "未记录字段明细";
+    row.append(cell);
+    const origin = document.createElement("td");
+    origin.textContent = event.source + (event.entity === "resource_relation" && event.recordId ? " · 关系 " + event.recordId : "");
+    row.append(origin);
+    el("history").append(row);
+  }
+  state.shown += rows.length;
+  el("history-table").hidden = state.events.length === 0;
+  el("more-history").hidden = state.shown >= state.events.length;
+  el("history-count").textContent = state.events.length ? "按时间从早到晚 · 已显示 " + state.shown + " / " + state.events.length + " 条" : "";
+}
+
+async function loadHistory(resource) {
   const revision = ++state.revision;
-  el("choices").hidden = true;
+  closePicker();
   el("result").hidden = true;
-  notice("正在查询操作人和变更记录…");
+  notice("正在读取创建、修改和删除记录…");
   const schema = database.value;
+  const appCode = application.value;
   const tables = state.schemas.get(schema);
-  let incomplete = !["audit_log", "operation_log", "entity_operation"].some(table => tables.has(table));
-  if (refreshResource) {
+  const active = () => revision === state.revision;
+  const incomplete = [];
+  if (!resource.deleted) {
     try {
-      const [latest] = await query(q.resourceById(schema, application.value, resource.id), 1);
-      if (revision !== state.revision) return;
-      if (!latest) return notice("这条资源已经不在当前应用里，请重新查找。");
-      resource = latest;
-      state.resource = latest;
-      search.value = latest.name || latest.identity || latest.id;
+      const [latest] = await query(q.resourceById(schema, appCode, resource), 1);
+      if (!active()) return;
+      if (!latest) return notice("该资源已不在当前应用。可搜索名称或 ID，再点「查已删除」。");
+      resource = { ...resource, ...latest };
     } catch (error) {
-      if (revision === state.revision) notice(errorText(error), true);
+      if (active()) notice(errorText(error), true);
       return;
     }
   }
-  async function readOptional(table, makeSql, maxRows) {
-    if (!tables.has(table)) return [];
+  const key = { ...resource, uuid: resource.deleted ? resource.originalUuid : resource.uuid };
+  async function readPages(label, buildSql, size, descending = true) {
+    const all = [];
     try {
-      return await query(makeSql(), maxRows);
+      let cursor = "";
+      while (active()) {
+        const result = await host.queryData({ connectionId: connection.value, sql: buildSql(cursor), maxRows: size, timeoutMs: 15000 });
+        if (!active()) break;
+        const rows = result.rows.map(row => Object.fromEntries(result.columns.map((col, index) => [col.name, row[index]])));
+        all.push(...rows);
+        if (!result.truncated && rows.length < size) break;
+        const next = rows.at(-1)?.id;
+        if (!next || (cursor && (descending ? compareIds(next, cursor) >= 0 : compareIds(next, cursor) <= 0))) {
+          throw new Error("无法继续读取下一页");
+        }
+        cursor = next;
+      }
     } catch {
-      incomplete = true;
-      return [];
+      incomplete.push(label);
+    }
+    return all;
+  }
+  const hasAudit = tables.has("audit_log");
+  const hasRelations = tables.has("resource_relation");
+  const ids = key.uuid && (hasAudit || hasRelations)
+    ? await readPages("资源关系", cursor => q.relationIds(schema, key, hasRelations, hasAudit, cursor), q.treePageSize, false) : [];
+  if (!active()) return;
+  const relationIds = ids.map(row => row.id);
+  const audit = hasAudit ? await readPages("字段审计", cursor => q.audit(schema, key, relationIds, cursor), q.logPageSize) : [];
+  const operations = tables.has("operation_log") ? await readPages("操作日志", cursor => q.operationLog(schema, key, relationIds, cursor), q.logPageSize) : [];
+  const entities = tables.has("entity_operation") ? await readPages("实体操作", cursor => q.entityLog(schema, key, cursor), q.logPageSize) : [];
+  const details = entities.length && tables.has("entity_operation_detail")
+    ? await readPages("实体操作明细", cursor => q.entityDetails(schema, key, cursor), q.logPageSize) : [];
+  if (!active()) return;
+  if (!hasAudit && !tables.has("operation_log") && !tables.has("entity_operation")) incomplete.push("当前库的审计与操作日志表");
+  const events = history.build(key, audit, operations, entities, details);
+  const codes = [...new Set([resource.modify_user, ...events.map(row => row.actor)].filter(Boolean))];
+  const names = new Map();
+  if (tables.has("user_info")) {
+    for (let offset = 0; offset < codes.length && active(); offset += 100) {
+      try {
+        const users = await query(q.operators(schema, codes.slice(offset, offset + 100)), 5000);
+        for (const row of users) {
+          if (!row.name) continue;
+          if (!names.has(row.code)) names.set(row.code, new Set());
+          names.get(row.code).add(row.name);
+        }
+      } catch {
+        incomplete.push("操作人姓名");
+        break;
+      }
     }
   }
-  const relations = await readOptional("resource_relation", () => q.relations(schema, resource), 500);
-  if (revision !== state.revision) return;
-  const relationIds = relations.map(row => row.id);
-  const audit = await readOptional("audit_log", () => q.audit(schema, resource, relationIds), 601);
-  if (revision !== state.revision) return;
-  const operations = await readOptional("operation_log", () => q.operationLog(schema, resource, relationIds), 201);
-  if (revision !== state.revision) return;
-  const entity = await readOptional("entity_operation", () => q.entityLog(schema, resource), 201);
-  if (revision !== state.revision) return;
-  const events = q.buildHistory(audit, operations, entity);
-  const codes = [...new Set([resource.modify_user, ...events.slice(0, 200).map(row => row.actor)].filter(Boolean))];
-  const operators = codes.length ? await readOptional("user_info", () => q.operators(schema, codes), 1001) : [];
-  if (revision !== state.revision) return;
-  const names = new Map();
-  for (const row of operators) {
-    if (!row.name) continue;
-    if (!names.has(row.code)) names.set(row.code, new Set());
-    names.get(row.code).add(row.name);
-  }
-  renderHistory(resource, events, names, incomplete, audit.length === 601 || operations.length === 201 || entity.length === 201);
+  if (!active()) return;
+  state.resource = resource;
+  renderHistory(resource, events, names, incomplete);
   notice("");
 }
 
 connection.addEventListener("change", chooseConnection);
 database.addEventListener("change", loadApps);
-application.addEventListener("change", () => {
-  ++state.revision;
-  clearResource();
-  search.disabled = !application.value;
-  search.value = "";
-  search.placeholder = application.value ? resourcePlaceholder : "先选择应用";
-  if (application.value) {
-    search.focus();
-    findResources();
-  } else notice("请选择应用。");
+applicationSearch.addEventListener("input", () => openApplicationPicker(applicationSearch.value));
+applicationSearch.addEventListener("click", () => openApplicationPicker(
+  applicationSearch.value === application.selectedOptions[0]?.text ? "" : applicationSearch.value));
+applicationPicker.addEventListener("keydown", event => {
+  if (event.key === "Escape" && !applicationChoices.hidden) {
+    event.preventDefault();
+    closeApplicationPicker();
+    applicationSearch.value = application.value ? application.selectedOptions[0].text : "";
+    applicationSearch.focus();
+  }
+  if (event.target === applicationSearch && (event.key === "ArrowDown" || event.key === "Enter")) {
+    event.preventDefault();
+    if (applicationChoices.hidden) openApplicationPicker();
+    const buttons = el("application-options").querySelectorAll("button");
+    if (event.key === "Enter" && buttons.length === 1) buttons[0].click();
+    else buttons[0]?.focus();
+  }
+});
+el("toggle-applications").addEventListener("click", () => {
+  if (applicationChoices.hidden) openApplicationPicker();
+  else {
+    closeApplicationPicker();
+    applicationSearch.value = application.value ? application.selectedOptions[0].text : "";
+  }
 });
 search.addEventListener("input", () => {
   ++state.revision;
-  clearResource();
-  searchTimer = setTimeout(findResources, 300);
+  ++state.searchRevision;
+  state.resource = null;
+  el("result").hidden = true;
+  openPicker();
+  renderResourceTree(search.value.trim());
 });
-search.addEventListener("keydown", event => {
-  if (el("choices").hidden) return;
-  const buttons = el("resource-options").querySelectorAll("button");
-  if (event.key === "ArrowDown" && buttons.length) {
+search.addEventListener("click", openPicker);
+picker.addEventListener("keydown", event => {
+  if (event.key === "Escape" && !choices.hidden) {
     event.preventDefault();
-    buttons[0].focus();
+    closePicker();
+    search.focus();
   }
-  if (event.key === "Enter" && buttons.length === 1) {
+  if (event.target === search && (event.key === "ArrowDown" || event.key === "Enter")) {
     event.preventDefault();
-    buttons[0].click();
+    openPicker();
+    el("resource-options").querySelector("button")?.focus();
   }
 });
+document.addEventListener("click", event => {
+  if (!picker.contains(event.target)) closePicker();
+  if (!applicationPicker.contains(event.target)) {
+    closeApplicationPicker();
+    applicationSearch.value = application.value ? application.selectedOptions[0].text : "";
+  }
+});
+el("toggle-resources").addEventListener("click", () => {
+  if (choices.hidden) openPicker();
+  else closePicker();
+});
+el("resource-type").addEventListener("change", () => {
+  state.expanded.clear();
+  renderResourceTree(state.resource ? "" : search.value.trim());
+});
+el("search-deleted").addEventListener("click", searchDeleted);
+el("more-history").addEventListener("click", appendHistory);
 el("refresh-connections").addEventListener("click", () => loadConnections());
 el("refresh-history").addEventListener("click", () => {
-  if (state.resource) loadHistory(state.resource, true);
+  if (state.resource) loadHistory(state.resource);
 });
 
 async function start() {
