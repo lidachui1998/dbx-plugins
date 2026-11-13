@@ -6,8 +6,12 @@
 | --- | --- | --- |
 | [UC 资源变更查询](plugins/uc-resource-audit/) | [0.1.1 签名版](plugins/uc-resource-audit/releases/v0.1.1/) | 查看 UC 资源的操作人、时间和状态变更 |
 
-安装包在各插件的 `releases/v<版本>/` 下。登录 GitHub 后打开对应的 `.dbxp` 文件并下载，再从 DBX 插件中心选择本地安装。首次安装签名包前，在 DBX 中添加同目录 `dbx-trust-key.json` 提供的公钥。
+## 在 DBX 安装
 
-通过 URL 安装时，将同一版本的 `catalog.json` 和签名包放在 DBX 可访问的地址，例如 R2。目录中的安装包链接是相对路径，两个文件需要放在一起。
+1. 打开 DBX「插件中心 → 设置 → 插件仓库」。仓库 ID 填 `uc-resource-audit-r2`，名称填「UC 资源工具」，地址填 [catalog.json](https://raw.githubusercontent.com/lidachui1998/dbx-plugins/main/catalog.json)。
+2. 添加仓库后，展开「第三方与开发者选项」，在「自定义仓库信任」中填写 [签名密钥 ID 和公钥](plugins/uc-resource-audit/releases/v0.1.1/dbx-trust-key.json)。
+3. 回到「插件商店」，刷新后选择「UC 资源工具」，即可安装插件。
 
-新增插件时，在 `plugins/` 下创建独立目录，维护该插件的 `manifest.json`、源码和使用说明。签名公钥可随版本保存，私钥由发布者在本机保管。
+也可以在各插件的 `releases/v<版本>/` 下下载签名 `.dbxp`，在 DBX 中选择本地安装。
+
+新增插件时，在 `plugins/` 下创建独立目录，维护源码和使用说明。将签名包放入该插件的 `releases/v<版本>/`，并在根目录 `catalog.json` 的 `plugins` 数组里添加对应条目。使用已信任的密钥签名时，用户刷新插件商店即可看到新插件。签名私钥由发布者在本机保管。
