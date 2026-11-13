@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "id": "com.greencloud.uc.resource-audit",
+  "name": "UC 资源变更查询",
+  "version": "0.1.1",
+  "description": "按应用和资源查看 UC 操作人、时间及停用记录",
+  "publisher": "greencloud",
+  "engines": { "host_api": "^1.4" },
+  "permissions": ["host.connections:read", "host.data:read"],
+  "entrypoints": { "ui": { "root": "ui", "entry": "ui/index.html" } },
+  "contributions": [
+    { "type": "workbench", "id": "com.greencloud.uc.resource-audit.main", "label": "UC 资源变更查询" },
+    {
+      "type": "context-menu",
+      "id": "com.greencloud.uc.resource-audit.connection",
+      "label": "UC 资源变更查询",
+      "menu": "connection",
+      "action": { "type": "open-workbench", "workbench": "com.greencloud.uc.resource-audit.main" }
+    }
+  ]
+}

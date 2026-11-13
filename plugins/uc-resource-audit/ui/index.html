@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UC 资源变更查询</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>UC 资源变更查询</h1>
+      <button id="refresh-connections" type="button" disabled>刷新连接</button>
+    </header>
+    <section class="panel query-panel" aria-label="查询条件">
+      <div class="filters">
+        <label>环境<select id="connection" disabled><option>等待 DBX 连接</option></select></label>
+        <label id="database-label" hidden>数据库<select id="database"></select></label>
+        <label>应用<select id="application" disabled><option>先选择环境</option></select></label>
+        <label class="resource-filter">资源
+          <input id="resource-search" type="search" placeholder="先选择应用" maxlength="100" autocomplete="off" disabled>
+        </label>
+      </div>
+      <p id="notice" role="status" aria-live="polite">正在连接 DBX 工作台…</p>
+    </section>
+    <section id="choices" class="panel" aria-label="资源搜索结果" hidden>
+      <ul id="resource-options"></ul>
+      <p id="choices-note" class="hint" hidden>显示前 30 项，可输入更完整的名称或编码。</p>
+    </section>
+    <section id="result" aria-label="资源变更记录" hidden>
+      <div class="summary panel">
+        <div>
+          <h2 id="resource-name"></h2>
+          <p id="resource-meta" class="hint"></p>
+        </div>
+        <span id="resource-status" class="badge"></span>
+      </div>
+      <div class="panel records">
+        <div class="records-header">
+          <div>
+            <h2>谁改过</h2>
+            <p id="last-modifier" class="hint"></p>
+          </div>
+          <button id="refresh-history" type="button">重新查询</button>
+        </div>
+        <p id="history-note" class="hint"></p>
+        <div id="history-table" class="table-wrap" hidden>
+          <table>
+            <thead><tr><th>操作人</th><th>时间</th><th>操作</th><th>变更</th></tr></thead>
+            <tbody id="history"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script src="./queries.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
