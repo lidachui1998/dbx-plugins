@@ -43,7 +43,7 @@
           <button id="search-deleted" type="button" hidden>查已删除</button>
         </div>
       </div>
-      <div class="table-wrap resources-wrap">
+      <div id="resource-table-scroll" class="table-wrap resources-wrap">
         <table class="resources">
           <colgroup><col class="resource-order"><col><col class="resource-code"><col class="resource-type"><col class="resource-parent"><col class="resource-state"></colgroup>
           <thead><tr><th>排序</th><th>描述</th><th>代码</th><th>类型</th><th>上级资源</th><th>状态</th></tr></thead>
@@ -51,6 +51,11 @@
         </table>
       </div>
       <p id="resource-table-empty" class="hint" hidden>没有符合条件的资源。</p>
+      <nav id="resource-pagination" class="resource-pagination" aria-label="资源分页" hidden>
+        <button id="prev-resource-page" type="button">上一页</button>
+        <span id="resource-page-number" class="hint" aria-live="polite"></span>
+        <button id="next-resource-page" type="button">下一页</button>
+      </nav>
     </section>
     <section id="result" class="panel records" aria-label="资源变更记录" hidden>
       <div class="records-header resource-summary">

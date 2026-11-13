@@ -29,16 +29,17 @@ globalThis.UcAudit = (() => {
   }
 
   const treePageSize = 500;
+  const resourcePageSize = 1000;
   const logPageSize = 30;
 
   function resources(schema, appCode, cursor = "0") {
-    return "SELECT CAST(id AS CHAR) AS id,uuid,name,identity,type,parent_id,list_order,link,permission,is_halt " +
-      "FROM " + table(schema, "resource") + " WHERE app_code=" + literal(appCode) +
-      " AND id>" + (cursor === "0" ? "0" : numericId(cursor)) + " ORDER BY id LIMIT " + treePageSize;
+    return "SELECT CAST(r.id AS CHAR) AS id,r.uuid,r.name,r.identity,r.type,r.parent_id,r.list_order,r.is_halt " +
+      "FROM " + table(schema, "resource") + " r WHERE r.app_code=" + literal(appCode) +
+      " AND r.id>" + (cursor === "0" ? "0" : numericId(cursor)) + " ORDER BY r.id LIMIT " + resourcePageSize;
   }
 
   function resourceById(schema, appCode, resource) {
-    return "SELECT CAST(id AS CHAR) AS id,uuid,name,identity,type,parent_id,is_halt," +
+    return "SELECT CAST(id AS CHAR) AS id,uuid,name,identity,type,parent_id,is_halt,link,permission," +
       "create_user,create_datetime,modify_user,modify_datetime FROM " + table(schema, "resource") +
       " WHERE app_code=" + literal(appCode) + " AND id=" + numericId(resource.id) +
       " AND uuid=" + literal(resource.uuid) + " LIMIT 1";
@@ -131,5 +132,5 @@ globalThis.UcAudit = (() => {
 
 
   return { discover, apps, resources, resourceById, deletedResources, relationIds, audit, operationLog,
-    entityLog, entityDetails, operators, status, timeKey, treePageSize, logPageSize };
+    entityLog, entityDetails, operators, status, timeKey, treePageSize, resourcePageSize, logPageSize };
 })();

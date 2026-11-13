@@ -138,6 +138,8 @@ tbody tr:hover { background: var(--inset); }
 .resource-actions { display: flex; align-items: center; gap: 8px; }
 .resource-actions button { min-height: 30px; padding-block: 3px; }
 .resources-wrap { max-height: 320px; overflow: auto; }
+.resource-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 6px 10px; border-top: 1px solid var(--border); }
+.resource-pagination button { min-height: 30px; padding: 3px 9px; }
 .resources { min-width: 580px; }
 .resources thead { position: sticky; top: 0; z-index: 1; }
 .resources th, .resources td { padding: 4px 10px; vertical-align: middle; }

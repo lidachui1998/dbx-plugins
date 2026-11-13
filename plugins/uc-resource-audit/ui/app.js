@@ -17,6 +17,9 @@ const state = {
 };
 const resourceName = resource => resource.name || resource.identity || "未命名资源";
 const resourcePlaceholder = "输入资源名称、编码或 ID";
+const resourceTablePageSize = 100;
+let resourcePage = 0;
+let renderCurrentResourcePage;
 
 function notice(message, error = false) {
   el("notice").textContent = message;
@@ -62,9 +65,15 @@ function errorText(error) {
   return "DBX 查询失败，请检查连接和数据库权限后重试。";
 }
 
+async function queryPage(sql, maxRows) {
+  const { columns, rows, truncated } = await host.queryData({
+    connectionId: connection.value, sql, maxRows, timeoutMs: 15000,
+  });
+  return { rows: rows.map(row => Object.fromEntries(columns.map((col, index) => [col.name, row[index]]))), truncated };
+}
+
 async function query(sql, maxRows) {
-  const result = await host.queryData({ connectionId: connection.value, sql, maxRows, timeoutMs: 15000 });
-  return result.rows.map(row => Object.fromEntries(result.columns.map((col, index) => [col.name, row[index]])));
+  return (await queryPage(sql, maxRows)).rows;
 }
 
 async function loadConnections(preferred = connection.value) {
@@ -213,11 +222,15 @@ async function loadResources() {
   try {
     let cursor = "0";
     for (;;) {
-      const rows = await query(q.resources(schema, appCode, cursor), q.treePageSize);
+      const { rows, truncated } = await queryPage(q.resources(schema, appCode, cursor), q.resourcePageSize);
       if (revision !== state.revision) return;
-      all.push(...rows);
-      if (rows.length < q.treePageSize) break;
-      cursor = rows.at(-1).id;
+      for (const row of rows) {
+        if (compareIds(row.id, cursor) <= 0) throw new Error("资源分页顺序异常");
+        cursor = row.id;
+        all.push(row);
+      }
+      if (!truncated && rows.length < q.resourcePageSize) break;
+      if (!rows.length) throw new Error("资源分页无法继续");
     }
     all.sort((a, b) => Number(a.list_order || 0) - Number(b.list_order || 0) || compareIds(a.id, b.id));
     state.resources = new Map(all.map(row => [row.uuid, row]));
@@ -277,7 +290,10 @@ function renderResourceTree(term, deleted = [], limited = false) {
   deletedButton.disabled = false;
   el("deleted-note").textContent = limited ? "仅显示前 100 条删除记录，可缩小搜索范围。"
     : deleted.length ? "找到 " + deleted.length + " 条删除记录" : "";
-  renderResourceTable(roots, children, filtering);
+  resourcePage = 0;
+  renderCurrentResourcePage = () => renderResourceTable(roots, children, filtering);
+  renderCurrentResourcePage();
+  el("resource-table-scroll").scrollTop = 0;
 }
 
 function typeLabel(type) {
@@ -305,69 +321,91 @@ function selectResource(resource) {
 
 function renderResourceTable(roots, children, filtering) {
   const tbody = el("resource-rows");
+  const first = resourcePage * resourceTablePageSize;
+  const last = first + resourceTablePageSize;
   const rows = [];
-  function addRows(items, depth) {
+  let visited = 0;
+  let hasNext = false;
+
+  function visit(items, depth) {
     for (const resource of items) {
-      const row = document.createElement("tr");
-      row.dataset.resource = resource.uuid;
-      if (resource.is_halt === "T" || resource.deleted) row.className = "inactive-resource";
-      const order = document.createElement("td");
-      order.textContent = resource.list_order ?? "—";
-      const name = document.createElement("td");
-      const branch = document.createElement("div");
-      branch.className = "tree-row";
-      branch.style.paddingInlineStart = Math.min(depth, 8) * 14 + "px";
+      const index = visited++;
+      if (index === last) {
+        hasNext = true;
+        return;
+      }
       const descendants = children.get(resource.uuid);
-      const expanded = descendants?.length && (state.expanded.has(resource.uuid) || (filtering && !state.expanded.has("closed:" + resource.uuid)));
-      if (descendants?.length) {
-        const toggle = document.createElement("button");
-        toggle.type = "button";
-        toggle.className = "tree-toggle";
-        toggle.setAttribute("aria-expanded", String(Boolean(expanded)));
-        toggle.setAttribute("aria-label", (expanded ? "收起 " : "展开 ") + resourceName(resource));
-        toggle.textContent = expanded ? "−" : "+";
-        toggle.addEventListener("click", () => {
-          if (expanded) {
-            state.expanded.delete(resource.uuid);
-            state.expanded.add("closed:" + resource.uuid);
-          } else {
-            state.expanded.add(resource.uuid);
-            state.expanded.delete("closed:" + resource.uuid);
-          }
-          renderResourceTable(roots, children, filtering);
-          [...tbody.querySelectorAll("button[data-node]")].find(button => button.dataset.node === resource.uuid)?.focus();
-        });
-        toggle.dataset.node = resource.uuid;
-        branch.append(toggle);
-      } else {
-        const spacer = document.createElement("span");
-        spacer.className = "tree-spacer";
-        branch.append(spacer);
-      }
-      const select = document.createElement("button");
-      select.type = "button";
-      select.className = "resource-link";
-      select.textContent = resourceName(resource);
-      select.addEventListener("click", () => selectResource(resource));
-      branch.append(select);
-      name.append(branch);
-      row.append(order, name);
-      for (const value of [resource.identity, typeLabel(resource.type), parentLabel(resource)]) {
-        const cell = document.createElement("td");
-        cell.textContent = value || "—";
-        row.append(cell);
-      }
-      const statusCell = document.createElement("td");
-      statusCell.append(resourceStatus(resource));
-      row.append(statusCell);
-      rows.push(row);
-      if (expanded) addRows(descendants, depth + 1);
+      const hasChildren = Boolean(descendants?.length);
+      const expanded = hasChildren && (state.expanded.has(resource.uuid) ||
+        (filtering && !state.expanded.has("closed:" + resource.uuid)));
+      if (index >= first) rows.push(makeRow(resource, depth, hasChildren, expanded));
+      if (expanded) visit(descendants, depth + 1);
+      if (hasNext) return;
     }
   }
-  addRows(roots, 0);
+
+  function makeRow(resource, depth, hasChildren, expanded) {
+    const row = document.createElement("tr");
+    row.dataset.resource = resource.uuid;
+    if (resource.is_halt === "T" || resource.deleted) row.className = "inactive-resource";
+    const order = document.createElement("td");
+    order.textContent = resource.list_order ?? "—";
+    const name = document.createElement("td");
+    const branch = document.createElement("div");
+    branch.className = "tree-row";
+    branch.style.paddingInlineStart = Math.min(depth, 8) * 14 + "px";
+    if (hasChildren) {
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "tree-toggle";
+      toggle.setAttribute("aria-expanded", String(Boolean(expanded)));
+      toggle.setAttribute("aria-label", (expanded ? "收起 " : "展开 ") + resourceName(resource));
+      toggle.textContent = expanded ? "−" : "+";
+      toggle.addEventListener("click", () => {
+        if (expanded) {
+          state.expanded.delete(resource.uuid);
+          state.expanded.add("closed:" + resource.uuid);
+        } else {
+          state.expanded.add(resource.uuid);
+          state.expanded.delete("closed:" + resource.uuid);
+        }
+        renderResourceTable(roots, children, filtering);
+        [...tbody.querySelectorAll("button[data-node]")].find(button => button.dataset.node === resource.uuid)?.focus();
+      });
+      toggle.dataset.node = resource.uuid;
+      branch.append(toggle);
+    } else {
+      const spacer = document.createElement("span");
+      spacer.className = "tree-spacer";
+      branch.append(spacer);
+    }
+    const select = document.createElement("button");
+    select.type = "button";
+    select.className = "resource-link";
+    select.textContent = resourceName(resource);
+    select.addEventListener("click", () => selectResource(resource));
+    branch.append(select);
+    name.append(branch);
+    row.append(order, name);
+    for (const value of [resource.identity, typeLabel(resource.type), parentLabel(resource)]) {
+      const cell = document.createElement("td");
+      cell.textContent = value || "—";
+      row.append(cell);
+    }
+    const statusCell = document.createElement("td");
+    statusCell.append(resourceStatus(resource));
+    row.append(statusCell);
+    return row;
+  }
+
+  visit(roots, 0);
   tbody.replaceChildren(...rows);
   markSelectedResource();
   el("resource-table-empty").hidden = rows.length > 0;
+  el("resource-pagination").hidden = !resourcePage && !hasNext;
+  el("prev-resource-page").disabled = resourcePage === 0;
+  el("next-resource-page").disabled = !hasNext;
+  el("resource-page-number").textContent = "第 " + (resourcePage + 1) + " 页";
 }
 
 async function searchDeleted() {
@@ -530,11 +568,10 @@ async function loadHistory(resource, reveal = false) {
     try {
       let cursor = "";
       while (active()) {
-        const result = await host.queryData({ connectionId: connection.value, sql: buildSql(cursor), maxRows: size, timeoutMs: 15000 });
+        const { rows, truncated } = await queryPage(buildSql(cursor), size);
         if (!active()) break;
-        const rows = result.rows.map(row => Object.fromEntries(result.columns.map((col, index) => [col.name, row[index]])));
         all.push(...rows);
-        if (!result.truncated && rows.length < size) break;
+        if (!truncated && rows.length < size) break;
         const next = rows.at(-1)?.id;
         if (!next || (cursor && (descending ? compareIds(next, cursor) >= 0 : compareIds(next, cursor) <= 0))) {
           throw new Error("无法继续读取下一页");
@@ -635,6 +672,13 @@ document.addEventListener("click", event => {
   }
 });
 el("resource-type").addEventListener("change", filterResources);
+for (const [id, step] of [["prev-resource-page", -1], ["next-resource-page", 1]]) {
+  el(id).addEventListener("click", () => {
+    resourcePage += step;
+    renderCurrentResourcePage();
+    el("resource-table-scroll").scrollTop = 0;
+  });
+}
 el("search-deleted").addEventListener("click", searchDeleted);
 el("more-history").addEventListener("click", appendHistory);
 el("refresh-connections").addEventListener("click", () => loadConnections());
