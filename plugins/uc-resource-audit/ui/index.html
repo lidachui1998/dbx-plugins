@@ -29,62 +29,59 @@
           </section>
         </div>
         <label>资源类型<select id="resource-type" disabled><option value="">全部类型</option></select></label>
-        <div class="resource-filter" id="resource-picker">
-          <label for="resource-search">资源</label>
-          <div class="picker-input">
-            <input id="resource-search" type="search" placeholder="先选择应用" maxlength="100" autocomplete="off" aria-controls="choices" aria-expanded="false" disabled>
-            <button id="toggle-resources" type="button" aria-label="打开或关闭资源树" aria-controls="choices" aria-expanded="false" disabled>▾</button>
-          </div>
-          <section id="choices" aria-label="资源树" hidden>
-            <ul id="resource-options"></ul>
-            <p id="tree-empty" class="hint" hidden></p>
-            <div class="deleted-actions">
-              <button id="search-deleted" type="button" hidden>查已删除</button>
-              <span id="deleted-note" class="hint" role="status"></span>
-            </div>
-            <p id="choices-note" class="hint" hidden>显示前 100 条删除记录，可输入更完整的名称、编码或 ID。</p>
-          </section>
-        </div>
+        <label class="resource-filter" for="resource-search">搜索资源
+          <input id="resource-search" type="search" placeholder="先选择应用" maxlength="100" autocomplete="off" disabled>
+        </label>
       </div>
       <p id="notice" role="status" aria-live="polite">正在连接 DBX 工作台…</p>
     </section>
     <section id="resource-table" class="panel" aria-label="资源列表" hidden>
-      <div class="records-header"><h2>资源列表</h2></div>
+      <div class="records-header">
+        <h2>资源列表</h2>
+        <div class="resource-actions">
+          <span id="deleted-note" class="hint" role="status"></span>
+          <button id="search-deleted" type="button" hidden>查已删除</button>
+        </div>
+      </div>
       <div class="table-wrap resources-wrap">
         <table class="resources">
-          <thead><tr><th>排序</th><th>描述</th><th>代码</th><th>地址</th><th>类型</th><th>权限</th><th>上级资源</th><th>状态</th></tr></thead>
+          <colgroup><col class="resource-order"><col><col class="resource-code"><col class="resource-type"><col class="resource-parent"><col class="resource-state"></colgroup>
+          <thead><tr><th>排序</th><th>描述</th><th>代码</th><th>类型</th><th>上级资源</th><th>状态</th></tr></thead>
           <tbody id="resource-rows"></tbody>
         </table>
       </div>
       <p id="resource-table-empty" class="hint" hidden>没有符合条件的资源。</p>
     </section>
-    <section id="result" aria-label="资源变更记录" hidden>
-      <div class="summary panel">
+    <section id="result" class="panel records" aria-label="资源变更记录" hidden>
+      <div class="records-header resource-summary">
         <div>
-          <h2 id="resource-name"></h2>
           <p id="resource-path" class="resource-path"></p>
-          <p id="resource-meta" class="hint"></p>
-        </div>
-        <span id="resource-status" class="badge"></span>
-      </div>
-      <div class="panel records">
-        <div class="records-header">
-          <div>
-            <h2>变更时间线</h2>
-            <p id="history-count" class="hint"></p>
-            <p id="last-modifier" class="hint"></p>
+          <div class="resource-title">
+            <h2 id="resource-name" tabindex="-1"></h2>
+            <span id="resource-status" class="badge"></span>
           </div>
-          <button id="refresh-history" type="button">重新查询</button>
+          <p id="resource-meta" class="hint"></p>
+          <p id="last-modifier" class="hint"></p>
+          <details id="resource-properties" class="resource-properties" hidden>
+            <summary>地址与权限</summary>
+            <dl id="resource-property-list"></dl>
+          </details>
         </div>
-        <p id="history-note" class="hint"></p>
-        <div id="history-table" class="table-wrap" hidden>
-          <table>
-            <thead><tr><th>操作人</th><th>时间</th><th>操作</th><th>字段与内容</th><th>来源</th></tr></thead>
-            <tbody id="history"></tbody>
-          </table>
-        </div>
-        <button id="more-history" type="button" hidden>显示更多记录</button>
+        <button id="refresh-history" type="button">重新查询</button>
       </div>
+      <div class="timeline-heading">
+        <h3>变更时间线</h3>
+        <p id="history-count" class="hint"></p>
+      </div>
+      <p id="history-note" class="hint"></p>
+      <div id="history-table" class="table-wrap" hidden>
+        <table class="timeline">
+          <colgroup><col class="time-column"><col class="actor-column"><col class="action-column"><col></colgroup>
+          <thead><tr><th>时间</th><th>操作人</th><th>操作</th><th>变更内容</th></tr></thead>
+          <tbody id="history"></tbody>
+        </table>
+      </div>
+      <button id="more-history" type="button" hidden>显示更多记录</button>
     </section>
   </main>
   <script src="./queries.js"></script>

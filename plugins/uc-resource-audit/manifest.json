@@ -2,7 +2,7 @@
   "manifest_version": 1,
   "id": "com.greencloud.uc.resource-audit",
   "name": "UC 资源变更查询",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "按应用和资源查看 UC 操作人、时间及停用记录",
   "publisher": "greencloud",
   "engines": { "host_api": "^1.4" },

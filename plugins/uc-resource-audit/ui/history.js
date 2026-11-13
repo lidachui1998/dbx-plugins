@@ -11,6 +11,7 @@ globalThis.UcAuditHistory = (() => {
     create_user: "创建人", create_datetime: "创建时间", modify_user: "修改人", modify_datetime: "修改时间",
   };
   const writeFields = new Set(["id", "uuid", "modify_user", "modify_datetime"]);
+  const technicalFields = new Set([...writeFields, "create_user", "create_datetime"]);
   const source = { audit: "字段审计", operation: "操作日志", entity: "实体操作", record: "资源主记录" };
   const target = entity => entity === "resource_relation" ? "资源关系" : "资源";
   const fieldKey = field => String(field || "").replace(/[A-Z]/g, char => "_" + char.toLowerCase());
@@ -116,8 +117,30 @@ globalThis.UcAuditHistory = (() => {
         : ({ insert: "创建", update: "修改", delete: "删除" })[row.operation];
       row.title = action ? action + subject : subject + "操作";
     }
-    return events.sort((a, b) => (a.at || "0000").localeCompare(b.at || "0000"));
+    const mains = new Map();
+    for (const row of events) {
+      const key = statusKey(row);
+      if (row.entity !== "resource" || !key) continue;
+      if (!mains.has(key)) mains.set(key, []);
+      mains.get(key).push(row);
+    }
+    const timeline = events.filter(row => {
+      const key = statusKey(row);
+      const candidates = key && mains.get(key);
+      if (row.entity !== "resource_relation" || candidates?.length !== 1) return true;
+      const parent = candidates[0];
+      (parent.related ??= []).push(row);
+      return false;
+    });
+    return timeline.sort((a, b) => b.at.localeCompare(a.at));
   }
 
-  return { build, labels };
+  function statusKey(row) {
+    if (row.operation !== "update" || !row.at || !row.actor) return "";
+    const change = row.changes.find(item => item.field === "is_halt");
+    if (!change || !["T", "F"].includes(change.before) || !["T", "F"].includes(change.after)) return "";
+    return JSON.stringify([row.at, row.actor, change.before, change.after]);
+  }
+
+  return { build, labels, technicalFields };
 })();

@@ -10,8 +10,6 @@ const applicationPicker = el("application-picker");
 const applicationSearch = el("application-search");
 const applicationChoices = el("application-choices");
 const search = el("resource-search");
-const picker = el("resource-picker");
-const choices = el("choices");
 const history = globalThis.UcAuditHistory;
 const state = {
   connections: [], schemas: new Map(), resources: new Map(), children: new Map(),
@@ -33,7 +31,6 @@ function clearResource() {
   ++state.searchRevision;
   state.resource = null;
   state.events = [];
-  closePicker();
   el("result").hidden = true;
   el("resource-table").hidden = true;
   el("resource-type").disabled = true;
@@ -49,7 +46,6 @@ function resetApps() {
   search.value = "";
   search.placeholder = "先选择应用";
   search.disabled = true;
-  el("toggle-resources").disabled = true;
   clearResource();
 }
 
@@ -200,26 +196,10 @@ function pathText(resource) {
   return [...prefix, ...path.map(resourceName)].join(" › ");
 }
 
-function closePicker() {
-  ++state.searchRevision;
-  choices.hidden = true;
-  search.setAttribute("aria-expanded", "false");
-  el("toggle-resources").setAttribute("aria-expanded", "false");
-}
-
-function openPicker() {
-  if (search.disabled) return;
-  if (choices.hidden) renderResourceTree(state.resource ? "" : search.value.trim());
-  choices.hidden = false;
-  search.setAttribute("aria-expanded", "true");
-  el("toggle-resources").setAttribute("aria-expanded", "true");
-}
-
 async function loadResources() {
   const revision = ++state.revision;
   clearResource();
   search.disabled = true;
-  el("toggle-resources").disabled = true;
   search.value = "";
   search.placeholder = application.value ? "正在读取资源…" : "先选择应用";
   state.resources.clear();
@@ -248,7 +228,6 @@ async function loadResources() {
       state.children.get(key).push(row);
     }
     search.disabled = false;
-    el("toggle-resources").disabled = false;
     search.placeholder = resourcePlaceholder;
     const types = [...new Set(all.map(row => row.type).filter(Boolean))].sort();
     options(el("resource-type"), "全部类型", types.map(type => [type, typeLabel(type)]));
@@ -266,7 +245,6 @@ function compareIds(a, b) {
 }
 
 function renderResourceTree(term, deleted = [], limited = false) {
-  const list = el("resource-options");
   const needle = term.toLocaleLowerCase();
   const type = el("resource-type").value;
   const filtering = Boolean(needle || type);
@@ -274,7 +252,6 @@ function renderResourceTree(term, deleted = [], limited = false) {
     (!needle || String(row.name || "").toLocaleLowerCase().includes(needle) ||
      String(row.identity || "").toLocaleLowerCase().includes(needle) || row.id === needle)) : [];
   deleted = deleted.filter(row => !type || row.type === type);
-  const matches = new Set([...hits, ...deleted].map(row => row.uuid));
   const visible = new Set();
   let roots = state.children.get("") || [];
   let children = state.children;
@@ -295,15 +272,11 @@ function renderResourceTree(term, deleted = [], limited = false) {
     }
     children = linked;
   }
-  const nodes = roots.map(row => resourceNode(row, children, filtering, matches));
-  list.replaceChildren(...nodes);
-  el("tree-empty").hidden = nodes.length > 0;
-  el("tree-empty").textContent = filtering ? "没有找到匹配的资源。" : "该应用没有资源。";
-  el("choices-note").hidden = !limited;
   const deletedButton = el("search-deleted");
   deletedButton.hidden = !term || !state.schemas.get(database.value)?.has("audit_log");
   deletedButton.disabled = false;
-  el("deleted-note").textContent = deleted.length ? "已找到 " + deleted.length + " 条删除记录" : "";
+  el("deleted-note").textContent = limited ? "仅显示前 100 条删除记录，可缩小搜索范围。"
+    : deleted.length ? "找到 " + deleted.length + " 条删除记录" : "";
   renderResourceTable(roots, children, filtering);
 }
 
@@ -316,11 +289,18 @@ function parentLabel(resource) {
   return parent ? resourceName(parent) : resource.parent_id && resource.parent_id !== "-1" ? "不可查" : "无（一级资源）";
 }
 
+function markSelectedResource() {
+  for (const row of el("resource-rows").rows) {
+    const selected = row.dataset.resource === state.resource?.uuid;
+    row.classList.toggle("selected-resource", selected);
+    row.querySelector(".resource-link").setAttribute("aria-current", String(selected));
+  }
+}
+
 function selectResource(resource) {
-  search.value = resourceName(resource);
   state.resource = resource;
-  closePicker();
-  loadHistory(resource);
+  markSelectedResource();
+  loadHistory(resource, true);
 }
 
 function renderResourceTable(roots, children, filtering) {
@@ -329,13 +309,14 @@ function renderResourceTable(roots, children, filtering) {
   function addRows(items, depth) {
     for (const resource of items) {
       const row = document.createElement("tr");
+      row.dataset.resource = resource.uuid;
       if (resource.is_halt === "T" || resource.deleted) row.className = "inactive-resource";
       const order = document.createElement("td");
       order.textContent = resource.list_order ?? "—";
       const name = document.createElement("td");
       const branch = document.createElement("div");
       branch.className = "tree-row";
-      branch.style.paddingInlineStart = Math.min(depth, 10) * 17 + "px";
+      branch.style.paddingInlineStart = Math.min(depth, 8) * 14 + "px";
       const descendants = children.get(resource.uuid);
       const expanded = descendants?.length && (state.expanded.has(resource.uuid) || (filtering && !state.expanded.has("closed:" + resource.uuid)));
       if (descendants?.length) {
@@ -371,66 +352,22 @@ function renderResourceTable(roots, children, filtering) {
       branch.append(select);
       name.append(branch);
       row.append(order, name);
-      for (const value of [resource.identity, resource.link, typeLabel(resource.type), resource.permission, parentLabel(resource),
-        resource.deleted ? "已删除" : q.status(resource.is_halt)]) {
+      for (const value of [resource.identity, typeLabel(resource.type), parentLabel(resource)]) {
         const cell = document.createElement("td");
         cell.textContent = value || "—";
         row.append(cell);
       }
+      const statusCell = document.createElement("td");
+      statusCell.append(resourceStatus(resource));
+      row.append(statusCell);
       rows.push(row);
       if (expanded) addRows(descendants, depth + 1);
     }
   }
   addRows(roots, 0);
   tbody.replaceChildren(...rows);
+  markSelectedResource();
   el("resource-table-empty").hidden = rows.length > 0;
-}
-
-function resourceNode(resource, children, searching, matches) {
-  const item = document.createElement("li");
-  const row = document.createElement("div");
-  row.className = "tree-row";
-  const descendants = children.get(resource.uuid);
-  if (descendants?.length) {
-    const toggle = document.createElement("button");
-    toggle.type = "button";
-    toggle.className = "tree-toggle";
-    const branch = document.createElement("ul");
-    const setExpanded = expanded => {
-      toggle.setAttribute("aria-expanded", String(expanded));
-      toggle.setAttribute("aria-label", (expanded ? "收起 " : "展开 ") + resourceName(resource));
-      branch.hidden = !expanded;
-      if (expanded && !branch.childElementCount) {
-        branch.append(...descendants.map(child => resourceNode(child, children, searching, matches)));
-      }
-    };
-    toggle.addEventListener("click", () => setExpanded(branch.hidden));
-    row.append(toggle);
-    item.append(row, branch);
-    setExpanded(searching);
-  } else {
-    const spacer = document.createElement("span");
-    spacer.className = "tree-spacer";
-    row.append(spacer);
-    item.append(row);
-  }
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "option";
-  const name = document.createElement("strong");
-  name.textContent = resourceName(resource);
-  if (matches.has(resource.uuid)) name.className = "matched";
-  const label = document.createElement("span");
-  label.className = "hint";
-  label.textContent = ["上级 " + parentLabel(resource), resource.identity, typeLabel(resource.type), "ID " + resource.id,
-    resource.deleted ? "已删除" : ""].filter(Boolean).join(" · ");
-  button.append(name, label);
-  button.addEventListener("click", () => {
-    search.focus();
-    selectResource(resource);
-  });
-  row.append(button);
-  return item;
 }
 
 async function searchDeleted() {
@@ -449,7 +386,6 @@ async function searchDeleted() {
     }));
     const unique = [...new Map(deleted.reverse().map(row => [row.id, row])).values()].reverse();
     renderResourceTree(term, unique, rows.length > 100);
-    el("search-deleted").focus();
     if (!unique.length) note.textContent = "没有找到匹配的删除记录。";
   } catch (error) {
     if (revision === state.searchRevision) note.textContent = errorText(error);
@@ -458,14 +394,28 @@ async function searchDeleted() {
   }
 }
 
+function resourceStatus(resource, badge = document.createElement("span")) {
+  badge.textContent = resource.deleted ? "已删除" : q.status(resource.is_halt);
+  badge.className = "badge " + (resource.deleted || resource.is_halt === "T" ? "halted" : resource.is_halt === "F" ? "enabled" : "");
+  return badge;
+}
+
 function renderHistory(resource, events, names, incomplete) {
   const formatActor = code => names.get(code)?.size === 1 ? [...names.get(code)][0] + "（" + code + "）" : code || "未记录";
   el("resource-name").textContent = resourceName(resource);
   el("resource-path").textContent = pathText(resource);
-  el("resource-meta").textContent = [resource.identity, resource.type, "ID " + resource.id].filter(Boolean).join(" · ");
-  const badge = el("resource-status");
-  badge.textContent = resource.deleted ? "已删除" : q.status(resource.is_halt);
-  badge.className = "badge " + (resource.deleted || resource.is_halt === "T" ? "halted" : resource.is_halt === "F" ? "enabled" : "");
+  el("resource-meta").textContent = [resource.identity, typeLabel(resource.type), "ID " + resource.id].filter(Boolean).join(" · ");
+  resourceStatus(resource, el("resource-status"));
+  const properties = [["地址", resource.link], ["权限", resource.permission]].filter(([, value]) => value);
+  el("resource-properties").hidden = !properties.length;
+  el("resource-properties").open = false;
+  el("resource-property-list").replaceChildren(...properties.flatMap(([label, value]) => {
+    const term = document.createElement("dt");
+    const description = document.createElement("dd");
+    term.textContent = label;
+    description.textContent = value;
+    return [term, description];
+  }));
   el("last-modifier").textContent = resource.modify_user && q.timeKey(resource.modify_datetime)
     ? "资源最后写入 " + formatActor(resource.modify_user) + " · " + q.timeKey(resource.modify_datetime) : "";
   state.events = events;
@@ -481,62 +431,81 @@ function renderHistory(resource, events, names, incomplete) {
   el("result").hidden = false;
 }
 
+function formatValue(field, value) {
+  if (value === null) return "空";
+  if (field === "is_halt" && (value === "T" || value === "F")) return q.status(value);
+  if (field === "parent_id") {
+    if (!value || value === "-1") return "无（一级资源）";
+    if (state.resources.has(value)) return resourceName(state.resources.get(value)) + "（" + value + "）";
+  }
+  return value === "" ? "空字符串" : value;
+}
+
+function changeList(event, changes) {
+  const list = document.createElement("ul");
+  list.className = "change-list";
+  for (const change of changes) {
+    const item = document.createElement("li");
+    const field = document.createElement("strong");
+    field.textContent = history.labels[change.field] || change.field;
+    const before = formatValue(change.field, change.before);
+    const after = formatValue(change.field, change.after);
+    const value = document.createElement("span");
+    value.textContent = event.operation === "insert" ? after : event.operation === "delete" ? before : before + " → " + after;
+    item.append(field, value);
+    list.append(item);
+  }
+  return list;
+}
+
 function appendHistory() {
-  const formatValue = (field, value) => {
-    if (value === null) return "空";
-    if (field === "is_halt" && (value === "T" || value === "F")) return q.status(value);
-    if (field === "parent_id") {
-      if (!value || value === "-1") return "无（一级资源）";
-      if (state.resources.has(value)) return resourceName(state.resources.get(value)) + "（" + value + "）";
-    }
-    return value === "" ? "空字符串" : value;
-  };
   const rows = state.events.slice(state.shown, state.shown + 80);
   for (const event of rows) {
     const row = document.createElement("tr");
-    for (const value of [state.names(event.actor), event.at || "未记录", event.title]) {
+    for (const value of [event.at || "未记录", state.names(event.actor), event.title]) {
       const cell = document.createElement("td");
       cell.textContent = value;
       row.append(cell);
     }
     const cell = document.createElement("td");
-    if (event.changes.length) {
-      const details = document.createElement("details");
-      const summary = document.createElement("summary");
-      const labels = event.changes.map(change => history.labels[change.field] || change.field);
-      summary.textContent = labels.length <= 3 ? labels.join("、") : labels.slice(0, 3).join("、") + " 等 " + labels.length + " 项";
-      const list = document.createElement("ul");
-      for (const [index, change] of event.changes.entries()) {
-        const item = document.createElement("li");
-        const field = document.createElement("strong");
-        field.textContent = labels[index] + " ";
-        const before = formatValue(change.field, change.before);
-        const after = formatValue(change.field, change.after);
-        const value = event.operation === "insert" ? after : event.operation === "delete" ? before : before + " → " + after;
-        item.append(field, value);
-        list.append(item);
-      }
-      if (event.changes.length <= 2) cell.append(list);
-      else {
-        details.append(summary, list);
-        cell.append(details);
-      }
-    } else cell.textContent = event.operation === "insert" ? "未记录创建时的字段值" : "未记录字段明细";
-    row.append(cell);
-    const origin = document.createElement("td");
+    const changes = event.changes.filter(change => !history.technicalFields.has(change.field));
+    changes.sort((a, b) => Number(b.field === "is_halt") - Number(a.field === "is_halt"));
+    if (changes.length) cell.append(changeList(event, changes.slice(0, 2)));
+    else if (event.operation === "insert") cell.textContent = "未记录创建时的字段值";
+    else cell.textContent = event.changes.length ? "仅记录写入信息" : "未记录字段明细";
+
+    const details = document.createElement("details");
+    details.className = "log-details";
+    const summary = document.createElement("summary");
+    const related = event.related?.length || 0;
+    summary.textContent = related ? "日志明细 · " + related + " 条资源关系" : "日志明细";
+    details.append(summary);
+    if (changes.length > 2) details.append(changeList(event, changes.slice(2)));
+    const metadata = event.changes.filter(change => history.technicalFields.has(change.field));
+    if (metadata.length) details.append(changeList(event, metadata));
+    const origin = document.createElement("p");
+    origin.className = "hint";
     origin.textContent = event.source + (event.entity === "resource_relation" && event.recordId ? " · 关系 " + event.recordId : "");
-    row.append(origin);
+    details.append(origin);
+    for (const relation of event.related || []) {
+      const label = document.createElement("p");
+      label.className = "related-log";
+      label.textContent = relation.title + " · " + (relation.recordId || "未记录 ID") + " · " + relation.source;
+      details.append(label, changeList(relation, relation.changes));
+    }
+    cell.append(details);
+    row.append(cell);
     el("history").append(row);
   }
   state.shown += rows.length;
   el("history-table").hidden = state.events.length === 0;
   el("more-history").hidden = state.shown >= state.events.length;
-  el("history-count").textContent = state.events.length ? "按时间从早到晚 · 已显示 " + state.shown + " / " + state.events.length + " 条" : "";
+  el("history-count").textContent = state.events.length
+    ? "最新在上 · " + (state.shown < state.events.length ? state.shown + " / " : "") + state.events.length + " 条" : "";
 }
 
-async function loadHistory(resource) {
+async function loadHistory(resource, reveal = false) {
   const revision = ++state.revision;
-  closePicker();
   el("result").hidden = true;
   notice("正在读取创建、修改和删除记录…");
   const schema = database.value;
@@ -612,6 +581,10 @@ async function loadHistory(resource) {
   state.resource = resource;
   renderHistory(resource, events, names, incomplete);
   notice("");
+  if (reveal) {
+    el("resource-name").focus({ preventScroll: true });
+    el("result").scrollIntoView({ block: "start", inline: "nearest" });
+  }
 }
 
 connection.addEventListener("change", chooseConnection);
@@ -641,42 +614,27 @@ el("toggle-applications").addEventListener("click", () => {
     applicationSearch.value = application.value ? application.selectedOptions[0].text : "";
   }
 });
-search.addEventListener("input", () => {
-  ++state.revision;
+function filterResources() {
   ++state.searchRevision;
-  state.resource = null;
-  el("result").hidden = true;
-  openPicker();
+  state.expanded.clear();
   renderResourceTree(search.value.trim());
-});
-search.addEventListener("click", openPicker);
-picker.addEventListener("keydown", event => {
-  if (event.key === "Escape" && !choices.hidden) {
+}
+
+search.addEventListener("input", filterResources);
+search.addEventListener("keydown", event => {
+  const first = el("resource-rows").querySelector(".resource-link");
+  if ((event.key === "ArrowDown" || event.key === "Enter") && first) {
     event.preventDefault();
-    closePicker();
-    search.focus();
-  }
-  if (event.target === search && (event.key === "ArrowDown" || event.key === "Enter")) {
-    event.preventDefault();
-    openPicker();
-    el("resource-options").querySelector("button")?.focus();
+    first.focus();
   }
 });
 document.addEventListener("click", event => {
-  if (!picker.contains(event.target)) closePicker();
   if (!applicationPicker.contains(event.target)) {
     closeApplicationPicker();
     applicationSearch.value = application.value ? application.selectedOptions[0].text : "";
   }
 });
-el("toggle-resources").addEventListener("click", () => {
-  if (choices.hidden) openPicker();
-  else closePicker();
-});
-el("resource-type").addEventListener("change", () => {
-  state.expanded.clear();
-  renderResourceTree(state.resource ? "" : search.value.trim());
-});
+el("resource-type").addEventListener("change", filterResources);
 el("search-deleted").addEventListener("click", searchDeleted);
 el("more-history").addEventListener("click", appendHistory);
 el("refresh-connections").addEventListener("click", () => loadConnections());

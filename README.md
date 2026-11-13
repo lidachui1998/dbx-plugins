@@ -4,7 +4,7 @@
 
 | 插件 | 版本 | 用途 |
 | --- | --- | --- |
-| [UC 资源变更查询](plugins/uc-resource-audit/) | [0.1.2 签名版](plugins/uc-resource-audit/releases/v0.1.2/) | 查看 UC 资源的操作人、时间和状态变更 |
+| [UC 资源变更查询](plugins/uc-resource-audit/) | [0.1.3 签名版](plugins/uc-resource-audit/releases/v0.1.3/) | 查看 UC 资源的操作人、时间和状态变更 |
 
 ## 在 DBX 安装
 
