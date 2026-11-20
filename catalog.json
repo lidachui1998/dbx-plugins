@@ -4,6 +4,18 @@
     {
       "versions": [
         {
+          "version": "0.2.1",
+          "artifacts": [
+            {
+              "target": "universal",
+              "url": "plugins/uc-resource-audit/releases/v0.2.1/com.greencloud.uc.resource-audit-0.2.1-universal-signed.dbxp",
+              "size": 32144,
+              "signingKeyId": "uc-resource-audit.r2.736bcd9c783cb013",
+              "sha256": "a4f65e6f6ccd90fe2f04d7d79ca9681cfbb6ebb445618f4ed3bdc1388925967d"
+            }
+          ]
+        },
+        {
           "version": "0.2.0",
           "artifacts": [
             {
@@ -72,7 +84,7 @@
       "name": "UC 运维工具",
       "description": "查看 UC 资源变更，预览单位改码、改类型和删除的影响",
       "id": "com.greencloud.uc.resource-audit",
-      "latestVersion": "0.2.0"
+      "latestVersion": "0.2.1"
     }
   ],
   "repository": {

@@ -134,8 +134,7 @@
     status(!rows.length ? "未找到单位。" : rows.length > 30 ? "显示前 30 项，请缩小搜索范围。" : "请选择要维护的单位。");
   }
 
-  async function searchUnits(event) {
-    event.preventDefault();
+  async function searchUnits() {
     const value = search.value.trim();
     if (!value || !database.value) return;
     state.unit = null;
@@ -143,12 +142,15 @@
     el("results-panel").hidden = true;
     resetPreview();
     const version = ++state.searchVersion;
+    el("search-submit").disabled = true;
     status("正在查找单位…");
     try {
       const rows = await query(connection.value, q.findUnit(database.value, value), 31);
       if (version === state.searchVersion) renderUnits(rows);
     } catch (error) {
       if (version === state.searchVersion) status(message(error), true);
+    } finally {
+      if (version === state.searchVersion) el("search-submit").disabled = false;
     }
   }
 
@@ -209,8 +211,7 @@
     el("impact").hidden = false;
   }
 
-  async function preview(event) {
-    event.preventDefault();
+  async function preview() {
     if (!state.unit) return;
     resetPreview();
     const version = state.previewVersion;
@@ -271,6 +272,19 @@
     }
   }
 
+  function bindFormAction(form, button, run) {
+    // DBX 沙箱禁用表单提交，显式触发按钮并保留浏览器校验。
+    button.addEventListener("click", () => {
+      if (form.reportValidity()) run();
+    });
+    form.addEventListener("keydown", event => {
+      if (event.key !== "Enter" || event.isComposing ||
+          !(event.target instanceof HTMLInputElement) || event.target.type === "checkbox") return;
+      event.preventDefault();
+      button.click();
+    });
+  }
+
   async function start() {
     if (!host?.capabilities?.dataApi || !host.capabilities.connectionsApi) {
       return status("请在支持 Host API 1.4 的 DBX 中打开单位维护工作台。", true);
@@ -280,17 +294,19 @@
     el("refresh").addEventListener("click", () => loadConnections());
     connection.addEventListener("change", loadDatabases);
     database.addEventListener("change", setupSearch);
-    el("lookup").addEventListener("submit", searchUnits);
+    bindFormAction(el("lookup"), el("search-submit"), searchUnits);
     search.addEventListener("input", () => {
       state.searchVersion++;
       state.unit = null;
       el("selected").hidden = true;
       el("results-panel").hidden = true;
+      el("search-submit").disabled = false;
       resetPreview();
+      status("");
     });
     action.addEventListener("change", setupAction);
     for (const id of ["code", "operator", "inner", "type"]) el(id).addEventListener("input", resetPreview);
-    el("operation").addEventListener("submit", preview);
+    bindFormAction(el("operation"), el("preview"), preview);
     el("copy").addEventListener("click", copy);
     const fromContext = context => context?.connectionId || context?.id || "";
     host.onContext?.(context => {

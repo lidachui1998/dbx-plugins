@@ -2,7 +2,7 @@
   "manifest_version": 1,
   "id": "com.greencloud.uc.resource-audit",
   "name": "UC 运维工具",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "查看 UC 资源变更，预览单位改码、改类型和删除的影响",
   "publisher": "greencloud",
   "engines": {
