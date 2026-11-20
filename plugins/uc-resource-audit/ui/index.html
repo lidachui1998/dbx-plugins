@@ -3,11 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>UC 资源变更查询</title>
+  <title>UC 运维工具</title>
   <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="./unit.css">
 </head>
 <body>
-  <main>
+  <p id="workbench-loading" role="status">正在加载 UC 运维工具…</p>
+  <main id="resource-audit" hidden>
     <header>
       <h1>UC 资源变更查询</h1>
       <button id="refresh-connections" type="button" disabled>刷新连接</button>
@@ -89,8 +91,68 @@
       <button id="more-history" type="button" hidden>显示更多记录</button>
     </section>
   </main>
-  <script src="./queries.js"></script>
-  <script src="./history.js"></script>
-  <script src="./app.js"></script>
+  <main id="unit-maintenance" hidden>
+    <header>
+      <h1>UC 单位维护</h1>
+      <button id="unit-refresh" type="button" disabled>刷新连接</button>
+    </header>
+    <section class="panel" aria-label="查找单位">
+      <form id="unit-lookup" class="filters unit-lookup">
+        <label>连接<select id="unit-connection" disabled><option>等待 DBX 连接</option></select></label>
+        <label>数据库<select id="unit-database" disabled><option>请先选择连接</option></select></label>
+        <label>单位
+          <input id="unit-search" type="search" required maxlength="100" placeholder="代码、名称、ID 或 UUID" autocomplete="off" disabled>
+        </label>
+        <button id="unit-search-submit" type="submit" disabled>查找单位</button>
+      </form>
+      <p id="unit-status" class="unit-status" role="status">正在读取 DBX 工作台…</p>
+    </section>
+    <section id="unit-results-panel" class="panel unit-section" aria-label="查找结果" hidden>
+      <ul id="unit-results"></ul>
+    </section>
+    <section id="unit-selected" class="panel unit-section" aria-label="维护选中的单位" hidden>
+      <div class="unit-heading">
+        <h2 id="unit-identity-name"></h2>
+        <p id="unit-identity-detail" class="hint"></p>
+      </div>
+      <form id="unit-operation" class="filters">
+        <label>维护动作<select id="unit-action" required></select></label>
+        <label id="unit-code-label">新代码<input id="unit-code" type="text" maxlength="50" autocomplete="off" spellcheck="false"></label>
+        <label id="unit-type-label" hidden>新类型<select id="unit-type"></select></label>
+        <label id="unit-operator-label">UC 操作人工号
+          <input id="unit-operator" type="text" maxlength="64" autocomplete="off">
+        </label>
+        <button id="unit-preview" class="unit-primary" type="submit">预览影响</button>
+        <label id="unit-inner-label" class="unit-checkbox">
+          <input id="unit-inner" type="checkbox">
+          同时修改内部码和对应的单位树、关联表
+        </label>
+      </form>
+      <p id="unit-preview-status" class="unit-status" role="status"></p>
+    </section>
+    <section id="unit-impact" class="panel unit-section" hidden>
+      <div class="unit-heading">
+        <h2>命中记录</h2>
+        <p class="hint">扫描范围为选中的 UC 数据库。涉及上游同步或其他业务库时，先核对对应入口。</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">检查项</th><th scope="col">行数</th><th scope="col">处理</th></tr></thead>
+          <tbody id="unit-checks"></tbody>
+        </table>
+      </div>
+    </section>
+    <section id="unit-script-panel" class="panel unit-section" hidden>
+      <div class="records-header">
+        <div>
+          <h2>事务脚本</h2>
+          <p id="unit-script-help" class="hint">在目标库的独立 SQL 会话执行。查看校验值，确认后在同一会话提交，有错误就回滚。</p>
+        </div>
+        <button id="unit-copy" type="button">复制 SQL</button>
+      </div>
+      <textarea id="unit-script" readonly spellcheck="false" aria-label="事务脚本" aria-describedby="unit-script-help"></textarea>
+    </section>
+  </main>
+  <script src="./workbench.js"></script>
 </body>
 </html>

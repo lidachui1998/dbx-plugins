@@ -134,7 +134,7 @@ $artifact = @{
 }
 @{
     catalogVersion = 1
-    repository = @{ id = 'uc-resource-audit-r2'; name = 'UC 资源工具' }
+    repository = @{ id = 'uc-resource-audit-r2'; name = 'UC 运维工具' }
     plugins = @(@{
         id = $manifest.id
         name = $manifest.name

@@ -1,0 +1,16 @@
+#workbench-loading { margin: 15px 24px; color: var(--muted); }
+.unit-section { margin-top: 14px; }
+.unit-lookup { grid-template-columns: repeat(2, minmax(145px, 1fr)) minmax(180px, 1.4fr) auto; }
+.unit-heading { padding: 15px 18px 0; }
+.unit-heading .hint { margin-top: 5px; overflow-wrap: anywhere; }
+#unit-impact .unit-heading { margin-bottom: 14px; }
+.unit-status { padding: 10px 18px; background: var(--inset); border-top: 1px solid var(--border); font-size: 13px; }
+.unit-status:empty { display: none; }
+.unit-status.error, #unit-checks .blocked { color: var(--error); background: var(--error-wash); }
+#unit-results { margin: 0; padding: 5px; list-style: none; max-height: 330px; overflow: auto; }
+.unit-primary { color: var(--accent); background: var(--accent-wash); }
+.unit-checkbox { display: flex; align-items: center; gap: 8px; grid-column: 1 / -1; font-weight: 500; }
+.unit-checkbox input { min-height: auto; width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+#unit-script { display: block; width: 100%; min-height: 230px; padding: 14px 18px; resize: vertical; border: 0; border-radius: 0; color: var(--text); background: var(--inset); font: 12px/1.55 "Cascadia Code", Consolas, monospace; }
+@media (max-width: 750px) { .unit-lookup { grid-template-columns: repeat(2, minmax(120px, 1fr)); } }
+@media (max-width: 374px) { .unit-lookup { grid-template-columns: 1fr; } }
