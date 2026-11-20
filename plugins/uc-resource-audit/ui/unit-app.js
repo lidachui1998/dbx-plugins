@@ -169,7 +169,7 @@
     selectOptions(el("type"), "请选择新类型", Object.entries(q.types)
       .filter(([code]) => code !== unit.type).map(([code, name]) => [code, name + " · " + code]));
     el("code").value = "";
-    el("inner").checked = false;
+    el("inner").checked = Boolean(unit.inner_code) && unit.inner_code === unit.code;
     el("selected").hidden = false;
     el("results-panel").hidden = true;
     status("");

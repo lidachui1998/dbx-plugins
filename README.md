@@ -4,7 +4,7 @@
 
 | 插件 | 版本 | 用途 |
 | --- | --- | --- |
-| [UC 运维工具](plugins/uc-resource-audit/) | [0.2.2 签名版](plugins/uc-resource-audit/releases/v0.2.2/) | 查询资源变更，预览单位改码、改类型和删除，并生成事务 SQL |
+| [UC 运维工具](plugins/uc-resource-audit/) | [0.2.3 签名版](plugins/uc-resource-audit/releases/v0.2.3/) | 查询资源变更，预览单位改码、改类型和删除，并生成事务 SQL |
 
 ## 在 DBX 安装
 
