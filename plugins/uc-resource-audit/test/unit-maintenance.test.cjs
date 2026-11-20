@@ -66,6 +66,8 @@ test("真实 MySQL 执行三类事务并阻止不匹配范围", { skip: !port },
     "inner_code VARCHAR(50), type VARCHAR(20) NOT NULL, parent_id VARCHAR(60), unit_id VARCHAR(60), name VARCHAR(60), " +
     "is_halt CHAR(1) DEFAULT 'F', modify_user VARCHAR(30), modify_datetime DATETIME) ENGINE=InnoDB;" +
     "CREATE TABLE unit_app (id INT PRIMARY KEY, unit_id VARCHAR(60)) ENGINE=InnoDB;" +
+    "CREATE TABLE app_step (id INT PRIMARY KEY, org_code VARCHAR(32) CHARACTER SET utf8 NOT NULL, " +
+    "state INT NOT NULL, INDEX idx_org_code (org_code)) ENGINE=InnoDB;" +
     "CREATE TABLE user_hotel_map (unit_id VARCHAR(60), hotel_group_code VARCHAR(50), hotel_code VARCHAR(50)) ENGINE=InnoDB;" +
     "CREATE TABLE user_unit_map (unit_id VARCHAR(60), manage_unit_code VARCHAR(50)) ENGINE=InnoDB;" +
     "CREATE TABLE unit_tree_relation (child_key VARCHAR(50), parent_key VARCHAR(50)) ENGINE=InnoDB;" +
@@ -79,8 +81,11 @@ test("真实 MySQL 执行三类事务并阻止不匹配范围", { skip: !port },
     "(2,'dept-01','HOTEL-OLD_DEPT_DEF',NULL,'','hotel-01','hotel-01','默认部门')," +
     "(3,'empty-03','EMPTY-03','KEY003','HOTEL','-1',NULL,'空酒店')," +
     "(4,'type-04','TYPE-04','KEY004','HOTEL','-1',NULL,'待变更酒店')," +
-    "(5,'delete-05','DELETE-05','KEY005','HOTEL','-1',NULL,'含外键酒店');" +
+    "(5,'delete-05','DELETE-05','KEY005','HOTEL','-1',NULL,'含外键酒店')," +
+    "(6,'other-06','OTHER-06','HOTEL-OLD','HOTEL','-1',NULL,'其他酒店');" +
     "INSERT INTO unit_app VALUES (1,'empty-03');" +
+    "INSERT INTO app_step VALUES (1,'KEY001',0),(2,'KEY001',1),(3,'KEY001',2)," +
+    "(4,'-1',0),(5,'HOTEL-OLD',2),(6,'KEY004',2);" +
     "INSERT INTO user_hotel_map VALUES ('other','GROUP','HOTEL-OLD');" +
     "INSERT INTO user_unit_map VALUES ('other','KEY001');" +
     "INSERT INTO unit_tree_relation VALUES ('KEY001','GROUPKEY');" +
@@ -96,15 +101,32 @@ test("真实 MySQL 执行三类事务并阻止不匹配范围", { skip: !port },
       [{ code: "HOTEL-NEW", inner_code: "KEY001", modify_user: administrator }]);
     assert.equal(rows(sql("SELECT code FROM organization WHERE id=2"))[0].code, "HOTEL-NEW_DEPT_DEF");
     assert.equal(rows(sql("SELECT hotel_code FROM user_hotel_map"))[0].hotel_code, "HOTEL-NEW");
+    const steps = assessment.rows.find(row => row.label === "app_step.org_code");
+    assert.equal(steps.effect, "info");
+    assert.equal(steps.matched, "3");
+    assert.equal(rows(sql("SELECT COUNT(*) AS total FROM app_step WHERE org_code='KEY001'"))[0].total, "3");
     assert.equal(rows(sql("SELECT before_value, after_value, change_source FROM organization_change_record"))[0].change_source, "MANUAL");
   });
 
   await t.test("同步内部码的关系可随事务整体回滚", () => {
     const [plan, assessment] = makePlan("HOTEL-NEW", "code", "HOTEL-INNER", true);
     assert.equal(assessment.blocked, false);
-    const result = runPlan(plan, assessment, "SELECT child_key FROM unit_tree_relation;\nSELECT manage_unit_code FROM user_unit_map;\nROLLBACK;");
+    const steps = assessment.rows.find(row => row.label === "app_step.org_code");
+    assert.equal(steps.effect, "write");
+    assert.equal(steps.matched, "3");
+    const result = runPlan(plan, assessment, [
+      "SELECT child_key FROM unit_tree_relation;",
+      "SELECT manage_unit_code FROM user_unit_map;",
+      "SELECT id, org_code, state FROM app_step ORDER BY id;",
+      "ROLLBACK;",
+    ].join("\n"));
     assert.match(result, /child_key\r?\nHOTEL-INNER/);
     assert.match(result, /manage_unit_code\r?\nHOTEL-INNER/);
+    assert.match(result, /1\tHOTEL-INNER\t0\r?\n2\tHOTEL-INNER\t1\r?\n3\tHOTEL-INNER\t2/);
+    assert.match(result, /4\t-1\t0\r?\n5\tHOTEL-OLD\t2/);
+    assert.equal(rows(sql("SELECT COUNT(*) AS total FROM app_step WHERE org_code='KEY001'"))[0].total, "3");
+    const tooLong = makePlan("HOTEL-NEW", "code", "A".repeat(33), true)[1];
+    assert.equal(tooLong.rows.find(row => row.label === "app_step.org_code").blocked, true);
     assert.equal(rows(sql("SELECT child_code FROM unit_associate"))[0].child_code, "KEY001");
     assert.equal(rows(sql("SELECT COUNT(*) AS total FROM organization_change_record"))[0].total, "1");
   });

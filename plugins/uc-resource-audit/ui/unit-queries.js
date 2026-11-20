@@ -18,6 +18,7 @@ globalThis.UcUnitMaintenance = (() => {
     resource_access_history: ["unit_code"],
   };
   const inner = {
+    app_step: ["org_code"],
     unit_tree_relation: ["child_key", "parent_key"],
     unit_associate: ["child_code", "parent_code"],
     user_unit_map: ["manage_unit_code"],
@@ -208,8 +209,7 @@ globalThis.UcUnitMaintenance = (() => {
         }
       }
       if (!matchedColumns.length) continue;
-      const managesTopology = table === "hotel_group_relation" || Object.hasOwn(inner, table) ||
-        /^(?:sso_unit_mapping_relation|sync_org_mapping|biz_sync_config)$/.test(table);
+      const managesTopology = /^(?:hotel_group_relation|unit_tree_relation|unit_associate|user_unit_map|sso_unit_mapping_relation|sync_org_mapping|biz_sync_config)$/.test(table);
       const hasTypeField = ["unit_type", "org_type", "u_unit_type", "u_org_type"].some(col => details.columns.has(col));
       addCheck(checks, table, table, "(" + matchedColumns.join(" OR ") + ")",
         action === "delete" || managesTopology || hasTypeField ? "block" : "info");
